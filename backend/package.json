@@ -8,6 +8,9 @@
     "dev": "nodemon src/server.js",
     "test": "jest",
     "test:watch": "jest --watch",
+    "lint": "eslint src/**/*.js",
+    "lint:fix": "eslint src/**/*.js --fix",
+    "format": "prettier --write src/**/*.js",
     "migrate": "node-pg-migrate up",
     "migrate:down": "node-pg-migrate down",
     "seed": "node src/database/seeds/index.js"
