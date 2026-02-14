@@ -20,91 +20,55 @@ jobs:
           echo "📁 Directorio: $(pwd)"
           echo "👤 Usuario: $(whoami)"
 
-      - name: 🛑 Detener servicios
+      - name: � Navegar al proyecto
         run: |
-          echo "Deteniendo frontend y backend..."
-          cd /d/Archivos\ Frecuentes/restaurante
-          
-          # Detener procesos de npm si existen
-          taskkill //F //IM node.exe 2>$null || echo "No hay procesos node corriendo"
-          
-          # O si usas PM2:
-          # pm2 stop backend frontend || echo "PM2 no configurado"
+          echo "📁 Navegando a /data/nanlomo"
+          cd /data/nanlomo
+          pwd
 
-      - name: 📦 Actualizar código
+      - name: 🔄 Actualizar código
         run: |
-          echo "📥 Código actualizado por checkout"
-          git log -1 --pretty=format:"%h - %s (%an)"
+          echo "📥 Pulling latest code..."
+          cd /data/nanlomo
+          git pull origin 001-restaurant-system
 
-      - name: 🔧 Instalar dependencias Backend
+      - name: 🔐 Login a Docker Hub
         run: |
-          cd backend
-          npm ci --production
+          cd /data/nanlomo
+          set -a
+          source .env
+          set +a
+          echo "🔐 Logging in to Docker Hub..."
+          docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
 
-      - name: 🔧 Instalar dependencias Frontend
+      - name: 📦 Pull Docker images
         run: |
-          cd frontend
-          npm ci
+          cd /data/nanlomo
+          echo "📦 Pulling backend image..."
+          docker pull mambru94/nanlomo-backend:latest
+          echo "📦 Pulling frontend image..."
+          docker pull mambru94/nanlomo-frontend:latest
 
-      - name: 🔨 Build Frontend
+      - name: 🔄 Restart services
         run: |
-          cd frontend
-          npm run build
-          echo "✅ Build completado en: $(pwd)/dist"
+          cd /data/nanlomo
+          echo "🛑 Stopping services..."
+          docker compose down
+          echo "🚀 Starting services..."
+          docker compose up -d
 
-      - name: 🗄️ Ejecutar migraciones
+      - name: ⏳ Wait for services
+        run: sleep 15
+
+      - name: ✅ Health check backend
         run: |
-          cd backend
-          npm run migrate
-        env:
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_NAME: ${{ secrets.DB_NAME }}
+          echo "🔍 Checking backend health..."
+          curl -f http://localhost:3002/health || exit 1
+          echo "✅ Backend is healthy!"
 
-      - name: 🚀 Iniciar servicios
-        run: |
-          cd /d/Archivos\ Frecuentes/restaurante
-          
-          # Opción 1: Con PM2 (recomendado)
-          pm2 start ecosystem.config.js || echo "⚠️ PM2 no configurado"
-          
-          # Opción 2: Background directo (alternativa)
-          # cd backend && npm start & 
-          # cd ../frontend && npm run preview &
-
-      - name: 🏥 Health Check
-        run: |
-          echo "Esperando que servicios inicien..."
-          Start-Sleep -Seconds 10
-          
-          # Verificar backend
-          $response = Invoke-RestMethod -Uri "http://localhost:3002/health" -ErrorAction SilentlyContinue
-          if ($response) {
-            echo "✅ Backend health check OK"
-          } else {
-            echo "⚠️ Backend no responde"
-          }
-
-      - name: 📱 Notificar resultado
+      - name: 🎉 Deploy complete
         run: |
           echo "✅ Deploy completado exitosamente!"
-          echo "🌐 Frontend: http://localhost:3010"
-          echo "🔌 Backend: http://localhost:3002"
-          echo "📅 Fecha: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-
-      - name: 📊 Log de deploy
-        run: |
-          $logFile = "logs/deploy-$(Get-Date -Format 'yyyy-MM-dd-HHmmss').log"
-          mkdir -Force logs
-          @"
-          Deploy Log
-          ==========
-          Commit: ${{ github.sha }}
-          Branch: ${{ github.ref }}
-          Actor: ${{ github.actor }}
-          Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-          Status: Success
-          "@ | Out-File -FilePath $logFile
-          echo "📝 Log guardado en: $logFile"
+          cd /data/nanlomo
+          echo "📝 Último commit desplegado:"
+          git log -1 --pretty=format:"%h - %s (%an)"
