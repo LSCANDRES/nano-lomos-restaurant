@@ -2,7 +2,7 @@ name: Deploy to LAN Server
 
 on:
   push:
-    branches: [ 001-restaurant-system, main ]
+    branches: [ master, main, 001-restaurant-system ]
   workflow_dispatch:
 
 jobs:

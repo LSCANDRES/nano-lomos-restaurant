@@ -2,9 +2,9 @@ name: CI - Tests y Validación
 
 on:
   pull_request:
-    branches: [ main, develop, 001-restaurant-system ]
+    branches: [ master, main, develop, 001-restaurant-system ]
   push:
-    branches: [ main, develop, 001-restaurant-system ]
+    branches: [ master, main, develop, 001-restaurant-system ]
 
 jobs:
   backend-tests:
