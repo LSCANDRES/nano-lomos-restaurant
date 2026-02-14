@@ -1,0 +1,10 @@
+# Health check endpoint
+GET http://localhost:3002/health
+
+# Expected response:
+# {
+#   "status": "ok",
+#   "timestamp": "2026-02-14T12:00:00.000Z",
+#   "uptime": 1234.567,
+#   "database": "connected"
+# }

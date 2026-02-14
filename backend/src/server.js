@@ -54,13 +54,49 @@ app.use((req, res, next) => {
 });
 
 // Health check endpoint (raíz)
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (req, res) => {
+  try {
+    const db = require('./database/connection');
+    await db.query('SELECT 1');
+    
+    res.json({ 
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'connected'
+    });
+  } catch (error) {
+    res.status(503).json({ 
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'disconnected',
+      error: error.message
+    });
+  }
 });
 
 // Health check endpoint (bajo /api para nginx proxy)
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  try {
+    const db = require('./database/connection');
+    await db.query('SELECT 1');
+    
+    res.json({ 
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'connected'
+    });
+  } catch (error) {
+    res.status(503).json({ 
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'disconnected',
+      error: error.message
+    });
+  }
 });
 
 // API routes
