@@ -1,110 +1,59 @@
-name: CD - Deploy a Servidor LAN
+name: Deploy to LAN Server
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:  # Deploy manual desde GitHub Mobile
+    branches: [ master, main, 001-restaurant-system ]
+  workflow_dispatch:
 
 jobs:
-  deploy-to-lan:
-    name: 🚀 Deploy to LAN Server
-    runs-on: self-hosted  # Corre en tu servidor local
+  deploy:
+    name: Deploy to Production
+    runs-on: self-hosted
     
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔍 Verificar ubicación
+      - name: Verify location
         run: |
-          echo "🖥️ Desplegando en servidor: $(hostname)"
-          echo "📁 Directorio: $(pwd)"
-          echo "👤 Usuario: $(whoami)"
+          echo "Server: $(hostname)"
+          echo "User: $(whoami)"
+          echo "Project dir: /data/nanlomo"
+          ls -la /data/nanlomo
 
-      - name: 🛑 Detener servicios
+      - name: Login to Docker Hub
         run: |
-          echo "Deteniendo frontend y backend..."
-          cd /d/Archivos\ Frecuentes/restaurante
-          
-          # Detener procesos de npm si existen
-          taskkill //F //IM node.exe 2>$null || echo "No hay procesos node corriendo"
-          
-          # O si usas PM2:
-          # pm2 stop backend frontend || echo "PM2 no configurado"
+          cd /data/nanlomo
+          set -a
+          source .env
+          set +a
+          echo "Logging in to Docker Hub..."
+          docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
 
-      - name: 📦 Actualizar código
+      - name: Pull Docker images
         run: |
-          echo "📥 Código actualizado por checkout"
-          git log -1 --pretty=format:"%h - %s (%an)"
+          cd /data/nanlomo
+          echo "Pulling backend image..."
+          docker pull mambru94/nanlomo-backend:latest
+          echo "Pulling frontend image..."
+          docker pull mambru94/nanlomo-frontend:latest
 
-      - name: 🔧 Instalar dependencias Backend
+      - name: Restart services
         run: |
-          cd backend
-          npm ci --production
+          cd /data/nanlomo
+          echo "Stopping services..."
+          docker compose down
+          echo "Starting services..."
+          docker compose up -d
 
-      - name: 🔧 Instalar dependencias Frontend
-        run: |
-          cd frontend
-          npm ci
+      - name: Wait for services
+        run: sleep 15
 
-      - name: 🔨 Build Frontend
+      - name: Health check
         run: |
-          cd frontend
-          npm run build
-          echo "✅ Build completado en: $(pwd)/dist"
+          echo "Checking backend health..."
+          curl -f http://localhost:3002/health || exit 1
+          echo "Backend is healthy!"
 
-      - name: 🗄️ Ejecutar migraciones
+      - name: Deploy complete
         run: |
-          cd backend
-          npm run migrate
-        env:
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-
-      - name: 🚀 Iniciar servicios
-        run: |
-          cd /d/Archivos\ Frecuentes/restaurante
-          
-          # Opción 1: Con PM2 (recomendado)
-          pm2 start ecosystem.config.js || echo "⚠️ PM2 no configurado"
-          
-          # Opción 2: Background directo (alternativa)
-          # cd backend && npm start & 
-          # cd ../frontend && npm run preview &
-
-      - name: 🏥 Health Check
-        run: |
-          echo "Esperando que servicios inicien..."
-          Start-Sleep -Seconds 10
-          
-          # Verificar backend
-          $response = Invoke-RestMethod -Uri "http://localhost:3002/health" -ErrorAction SilentlyContinue
-          if ($response) {
-            echo "✅ Backend health check OK"
-          } else {
-            echo "⚠️ Backend no responde"
-          }
-
-      - name: 📱 Notificar resultado
-        run: |
-          echo "✅ Deploy completado exitosamente!"
-          echo "🌐 Frontend: http://localhost:3010"
-          echo "🔌 Backend: http://localhost:3002"
-          echo "📅 Fecha: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-
-      - name: 📊 Log de deploy
-        run: |
-          $logFile = "logs/deploy-$(Get-Date -Format 'yyyy-MM-dd-HHmmss').log"
-          mkdir -Force logs
-          @"
-          Deploy Log
-          ==========
-          Commit: ${{ github.sha }}
-          Branch: ${{ github.ref }}
-          Actor: ${{ github.actor }}
-          Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-          Status: Success
-          "@ | Out-File -FilePath $logFile
-          echo "📝 Log guardado en: $logFile"
+          echo "Deploy completed successfully!"
+          echo "Images updated from Docker Hub"
+          echo "Services running in production"
