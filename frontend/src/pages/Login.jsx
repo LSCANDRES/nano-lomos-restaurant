@@ -69,15 +69,8 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4 relative overflow-hidden">
-      {/* Fondo con patrón sutil */}
-      <div className="absolute inset-0 opacity-5">
-        <div className="absolute inset-0" style={{
-          backgroundImage: 'repeating-linear-gradient(45deg, #EA580C 0px, #EA580C 2px, transparent 2px, transparent 10px)',
-        }}></div>
-      </div>
-      
-      <div className="w-full max-w-md relative z-10">
+    <div className="min-h-screen bg-white flex items-center justify-center px-4">
+      <div className="w-full max-w-md">
         <div className="flex justify-center mb-8">
           <Logo size="xl" />
         </div>
