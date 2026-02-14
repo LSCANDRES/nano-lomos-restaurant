@@ -2,7 +2,7 @@ name: CD - Deploy a Servidor LAN
 
 on:
   push:
-    branches: [ main ]
+    branches: [ 001-restaurant-system, main ]
   workflow_dispatch:  # Deploy manual desde GitHub Mobile
 
 jobs:
