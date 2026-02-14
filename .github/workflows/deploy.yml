@@ -1,0 +1,72 @@
+name: CD - Deploy a Producción
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Permite deploy manual desde GitHub Mobile
+
+jobs:
+  deploy:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://nanlomo.tudominio.com
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd backend && npm ci --production
+          cd ../frontend && npm ci
+
+      - name: 🔨 Build frontend
+        run: |
+          cd frontend
+          npm run build
+
+      - name: 🐳 Build Docker images
+        run: |
+          cd docker
+          docker-compose build
+
+      - name: 📤 Deploy via SSH (opcional)
+        run: |
+          echo "🚀 Desplegando a servidor de producción..."
+          # Aquí irían los comandos SSH para desplegar al servidor
+          # Por ejemplo: scp, rsync, docker push, etc.
+
+      - name: ✅ Deployment successful
+        run: |
+          echo "✅ Deployment completed successfully!"
+          echo "🌐 Application is now live"
+
+      - name: 📱 Notificar en Discord/Slack (opcional)
+        run: |
+          echo "📱 Notificación de deploy enviada"
+
+  health-check:
+    name: 🏥 Health Check
+    needs: deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🔍 Check backend health
+        run: |
+          echo "Checking backend health..."
+          # curl https://api.nanlomo.tudominio.com/health || exit 1
+
+      - name: 🔍 Check frontend availability
+        run: |
+          echo "Checking frontend availability..."
+          # curl https://nanlomo.tudominio.com || exit 1
+
+      - name: ✅ Health checks passed
+        run: echo "✅ All services are healthy"

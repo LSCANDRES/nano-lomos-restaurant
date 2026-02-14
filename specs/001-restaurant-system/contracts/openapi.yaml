@@ -1,0 +1,1125 @@
+openapi: 3.0.3
+info:
+  title: Restaurant Management System API
+  description: |
+    API REST para sistema de gestión de restaurante. Permite gestionar pedidos, 
+    menú, cocina, usuarios e inventario. Incluye autenticación JWT y WebSocket 
+    para actualizaciones en tiempo real.
+  version: 1.0.0
+  contact:
+    name: Restaurant System Team
+
+servers:
+  - url: http://192.168.100.35:3002/api
+    description: Production server (LAN)
+  - url: http://localhost:3002/api
+    description: Development server
+
+tags:
+  - name: Auth
+    description: Autenticación y gestión de sesiones
+  - name: Orders
+    description: Gestión de pedidos
+  - name: Menu
+    description: Catálogo de menú
+  - name: Kitchen
+    description: Operaciones de cocina
+  - name: Inventory
+    description: Control de inventario
+  - name: Reports
+    description: Reportes y estadísticas
+  - name: Users
+    description: Gestión de usuarios
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtenido del endpoint /auth/login
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        username:
+          type: string
+          example: "cocinero1"
+        full_name:
+          type: string
+          example: "María García"
+        role:
+          type: string
+          enum: [manager, cook, order_taker]
+          example: "cook"
+        active:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+
+    MenuItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Hamburguesa Clásica"
+        description:
+          type: string
+          example: "Carne, lechuga, tomate, queso"
+        price:
+          type: number
+          format: decimal
+          example: 8.50
+        category:
+          type: string
+          example: "principales"
+        active:
+          type: boolean
+          example: true
+        preparation_time_minutes:
+          type: integer
+          example: 12
+
+    Ingredient:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          example: "Carne molida"
+        unit:
+          type: string
+          example: "kg"
+        current_stock:
+          type: number
+          format: decimal
+          example: 50.0
+        min_stock:
+          type: number
+          format: decimal
+          example: 10.0
+        cost_per_unit:
+          type: number
+          format: decimal
+          example: 8.50
+        is_low:
+          type: boolean
+          description: true si current_stock < min_stock
+
+    Customer:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        first_name:
+          type: string
+          example: "Juan"
+        last_name:
+          type: string
+          example: "Pérez"
+        phone:
+          type: string
+          nullable: true
+          example: "555-1234"
+        email:
+          type: string
+          nullable: true
+          example: "juan.perez@email.com"
+        created_at:
+          type: string
+          format: date-time
+        total_orders:
+          type: integer
+          description: Cantidad total de pedidos del cliente
+          example: 5
+
+    Recipe:
+      type: object
+      properties:
+        id:
+          type: integer
+        menu_item_id:
+          type: integer
+        ingredient_id:
+          type: integer
+        ingredient:
+          $ref: '#/components/schemas/Ingredient'
+        quantity_needed:
+          type: number
+          format: decimal
+          example: 0.200
+        instructions:
+          type: string
+          nullable: true
+          description: Instrucciones de preparación del plato
+          example: "1. Formar hamburguesas de 200g\n2. Cocinar 5 min por lado\n3. Agregar queso al final"
+
+    OrderLine:
+      type: object
+      properties:
+        id:
+          type: integer
+        menu_item_id:
+          type: integer
+        menu_item:
+          $ref: '#/components/schemas/MenuItem'
+        quantity:
+          type: integer
+          example: 2
+        unit_price:
+          type: number
+          format: decimal
+          example: 8.50
+        subtotal:
+          type: number
+          format: decimal
+          example: 17.00
+        notes:
+          type: string
+          nullable: true
+          example: "Sin cebolla"
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        table_number:
+          type: string
+          nullable: true
+          example: "Mesa 5"
+        status:
+          type: string
+          enum: [pending, assigned, in_progress, completed]
+          example: "pending"
+        assigned_cook_id:
+          type: integer
+          nullable: true
+        assigned_cook:
+          $ref: '#/components/schemas/User'
+        created_by_user_id:
+          type: integer
+        created_by:
+          $ref: '#/components/schemas/User'
+        total_amount:
+          type: number
+          format: decimal
+          example: 16.50
+        created_at:
+          type: string
+          format: date-time
+        assigned_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderLine'
+        notes:
+          type: string
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Invalid credentials"
+            code:
+              type: string
+              example: "UNAUTHORIZED"
+            details:
+              type: object
+              nullable: true
+
+  responses:
+    UnauthorizedError:
+      description: Token inválido o ausente
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    
+    ForbiddenError:
+      description: Permisos insuficientes para esta operación
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ValidationError:
+      description: Error de validación en request body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+security:
+  - BearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Autenticar usuario
+      description: Login con username y password. Retorna JWT token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: "cocinero1"
+                password:
+                  type: string
+                  format: password
+                  example: "password123"
+      responses:
+        '200':
+          description: Login exitoso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT token
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Obtener usuario actual
+      description: Retorna información del usuario autenticado
+      responses:
+        '200':
+          description: Usuario actual
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: Listar pedidos
+      description: Obtiene lista de pedidos. Filtrable por status.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, assigned, in_progress, completed]
+          description: Filtrar por estado
+        - name: assigned_cook_id
+          in: query
+          schema:
+            type: integer
+          description: Filtrar por cocinero asignado
+        - name: from_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filtrar desde fecha (YYYY-MM-DD)
+      responses:
+        '200':
+          description: Lista de pedidos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  total:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags: [Orders]
+      summary: Crear nuevo pedido
+      description: |
+        Crea un nuevo pedido con estado 'pending'. Solo usuarios con rol 
+        'order_taker' o 'manager' pueden crear pedidos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                customer_id:
+                  type: integer
+                  description: ID del cliente asociado (opcional)
+                  example: 1
+                table_number:
+                  type: string
+                  example: "Mesa 5"
+                notes:
+                  type: string
+                  example: "Cliente alérgico a mariscos"
+                lines:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [menu_item_id, quantity]
+                    properties:
+                      menu_item_id:
+                        type: integer
+                      quantity:
+                        type: integer
+                        minimum: 1
+                      notes:
+                        type: string
+      responses:
+        '201':
+          description: Pedido creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /orders/{orderId}:
+    get:
+      tags: [Orders]
+      summary: Obtener detalle de pedido
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Detalle del pedido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          description: Pedido no encontrado
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    put:
+      tags: [Orders]
+      summary: Actualizar pedido
+      description: Actualiza información del pedido (table_number, notes)
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                table_number:
+                  type: string
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Pedido actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          description: Pedido no encontrado
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /orders/{orderId}/status:
+    put:
+      tags: [Orders]
+      summary: Cambiar estado de pedido
+      description: |
+        Transiciones válidas:
+        - pending → assigned (automático al asignar cocinero)
+        - assigned → in_progress (cocinero comienza)
+        - in_progress → completed (cocinero termina)
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [assigned, in_progress, completed]
+      responses:
+        '200':
+          description: Estado actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Transición de estado inválida
+        '404':
+          description: Pedido no encontrado
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /kitchen/assigned:
+    get:
+      tags: [Kitchen]
+      summary: Obtener pedido asignado al cocinero actual
+      description: |
+        Retorna el pedido actualmente asignado al cocinero autenticado.
+        Solo usuarios con rol 'cook' pueden usar este endpoint.
+      responses:
+        '200':
+          description: Pedido asignado
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Order'
+                  - type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "No hay pedidos asignados"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /kitchen/request-order:
+    post:
+      tags: [Kitchen]
+      summary: Solicitar asignación de pedido
+      description: |
+        Cocinero solicita que se le asigne el siguiente pedido pendiente.
+        Sistema asigna automáticamente el pedido más antiguo.
+      responses:
+        '200':
+          description: Pedido asignado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          description: No hay pedidos pendientes
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /kitchen/stats:
+    get:
+      tags: [Kitchen]
+      summary: Estadísticas del cocinero actual
+      description: Pedidos completados en el turno, tiempo promedio, etc.
+      responses:
+        '200':
+          description: Estadísticas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  completed_today:
+                    type: integer
+                    example: 15
+                  avg_preparation_time_minutes:
+                    type: number
+                    example: 12.5
+                  current_order:
+                    oneOf:
+                      - $ref: '#/components/schemas/Order'
+                      - type: 'null'
+
+  /menu:
+    get:
+      tags: [Menu]
+      summary: Listar items del menú
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: boolean
+          description: Filtrar solo items activos
+        - name: category
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lista de items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MenuItem'
+
+    post:
+      tags: [Menu]
+      summary: Crear nuevo item de menú
+      description: Solo rol 'manager' puede crear items
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, price]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                price:
+                  type: number
+                  format: decimal
+                category:
+                  type: string
+                preparation_time_minutes:
+                  type: integer
+      responses:
+        '201':
+          description: Item creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /menu/{itemId}:
+    put:
+      tags: [Menu]
+      summary: Actualizar item de menú
+      description: Solo rol 'manager'
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                price:
+                  type: number
+                active:
+                  type: boolean
+      responses:
+        '200':
+          description: Item actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+        '404':
+          description: Item no encontrado
+
+  /inventory:
+    get:
+      tags: [Inventory]
+      summary: Listar inventario de ingredientes
+      parameters:
+        - name: low_stock
+          in: query
+          schema:
+            type: boolean
+          description: Filtrar solo ingredientes con stock bajo
+      responses:
+        '200':
+          description: Lista de ingredientes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ingredients:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Ingredient'
+
+    post:
+      tags: [Inventory]
+      summary: Crear nuevo ingrediente
+      description: Solo rol 'manager'. Agrega un nuevo ingrediente al inventario.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, unit, current_stock, min_stock, cost_per_unit]
+              properties:
+                name:
+                  type: string
+                  example: "Cebolla"
+                unit:
+                  type: string
+                  example: "kg"
+                current_stock:
+                  type: number
+                  format: decimal
+                  example: 25.0
+                min_stock:
+                  type: number
+                  format: decimal
+                  example: 5.0
+                cost_per_unit:
+                  type: number
+                  format: decimal
+                  example: 1.80
+      responses:
+        '201':
+          description: Ingrediente creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingredient'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /inventory/{ingredientId}:
+    put:
+      tags: [Inventory]
+      summary: Actualizar ingrediente
+      description: Solo rol 'manager'. Actualiza información del ingrediente.
+      parameters:
+        - name: ingredientId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                unit:
+                  type: string
+                min_stock:
+                  type: number
+                cost_per_unit:
+                  type: number
+      responses:
+        '200':
+          description: Ingrediente actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingredient'
+        '404':
+          description: Ingrediente no encontrado
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    delete:
+      tags: [Inventory]
+      summary: Eliminar ingrediente
+      description: Solo rol 'manager'. Elimina ingrediente si no está referenciado en recetas.
+      parameters:
+        - name: ingredientId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Ingrediente eliminado
+        '400':
+          description: No se puede eliminar, ingrediente usado en recetas
+        '404':
+          description: Ingrediente no encontrado
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /inventory/{ingredientId}/restock:
+    post:
+      tags: [Inventory]
+      summary: Registrar entrada de mercadería
+      description: Solo rol 'manager'. Incrementa stock del ingrediente.
+      parameters:
+        - name: ingredientId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity:
+                  type: number
+                  format: decimal
+                  minimum: 0.001
+                  example: 20.0
+                notes:
+                  type: string
+                  example: "Compra semanal"
+      responses:
+        '200':
+          description: Stock actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingredient'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /reports/daily:
+    get:
+      tags: [Reports]
+      summary: Reporte diario
+      description: |
+        Estadísticas del día: pedidos completados, recaudación, 
+        tiempos promedio. Solo rol 'manager'.
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Fecha del reporte (default: hoy)
+      responses:
+        '200':
+          description: Reporte diario
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date:
+                    type: string
+                    format: date
+                  total_orders:
+                    type: integer
+                    example: 45
+                  completed_orders:
+                    type: integer
+                    example: 42
+                  total_revenue:
+                    type: number
+                    format: decimal
+                    example: 387.50
+                  avg_preparation_time_minutes:
+                    type: number
+                    example: 13.2
+                  orders_by_cook:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        cook_name:
+                          type: string
+                        completed_orders:
+                          type: integer
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /reports/revenue:
+    get:
+      tags: [Reports]
+      summary: Reporte de recaudación
+      description: Recaudación en rango de fechas. Solo rol 'manager'.
+      parameters:
+        - name: from_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Reporte de recaudación
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  from_date:
+                    type: string
+                  to_date:
+                    type: string
+                  total_revenue:
+                    type: number
+                  daily_breakdown:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                        revenue:
+                          type: number
+                        orders:
+                          type: integer
+
+  /users:
+    get:
+      tags: [Users]
+      summary: Listar usuarios
+      description: Solo rol 'manager'
+      responses:
+        '200':
+          description: Lista de usuarios
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      tags: [Users]
+      summary: Crear nuevo usuario
+      description: Solo rol 'manager'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, full_name, role]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+                full_name:
+                  type: string
+                role:
+                  type: string
+                  enum: [manager, cook, order_taker]
+      responses:
+        '201':
+          description: Usuario creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /recipes/{menuItemId}:
+    get:
+      tags: [Menu]
+      summary: Obtener receta de un plato
+      description: Retorna ingredientes necesarios e instrucciones de preparación
+      parameters:
+        - name: menuItemId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Receta del plato
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  menu_item:
+                    $ref: '#/components/schemas/MenuItem'
+                  ingredients:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Recipe'
+                  instructions:
+                    type: string
+                    nullable: true
+                    description: Instrucciones de preparación del plato
+        '404':
+          description: Item de menú no encontrado
+
+  /customers:
+    get:
+      tags: [Reports]
+      summary: Listar clientes
+      description: Solo rol 'manager'. Lista todos los clientes registrados.
+      responses:
+        '200':
+          description: Lista de clientes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  customers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Customer'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+    post:
+      tags: [Orders]
+      summary: Registrar nuevo cliente
+      description: Registra un nuevo cliente en el sistema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [first_name, last_name]
+              properties:
+                first_name:
+                  type: string
+                  example: "Juan"
+                last_name:
+                  type: string
+                  example: "Pérez"
+                phone:
+                  type: string
+                  example: "555-1234"
+                email:
+                  type: string
+                  example: "juan.perez@email.com"
+      responses:
+        '201':
+          description: Cliente creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /customers/{customerId}:
+    get:
+      tags: [Reports]
+      summary: Obtener cliente con historial
+      description: Solo rol 'manager'. Retorna datos del cliente y sus pedidos.
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Cliente con historial
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  customer:
+                    $ref: '#/components/schemas/Customer'
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  total_spent:
+                    type: number
+                    format: decimal
+                    description: Total gastado por el cliente
+        '404':
+          description: Cliente no encontrado
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
