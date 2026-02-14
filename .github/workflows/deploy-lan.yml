@@ -1,74 +1,59 @@
-name: CD - Deploy a Servidor LAN
+name: Deploy to LAN Server
 
 on:
   push:
     branches: [ 001-restaurant-system, main ]
-  workflow_dispatch:  # Deploy manual desde GitHub Mobile
+  workflow_dispatch:
 
 jobs:
-  deploy-to-lan:
-    name: 🚀 Deploy to LAN Server
-    runs-on: self-hosted  # Corre en tu servidor local
+  deploy:
+    name: Deploy to Production
+    runs-on: self-hosted
     
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔍 Verificar ubicación
+      - name: Verify location
         run: |
-          echo "🖥️ Desplegando en servidor: $(hostname)"
-          echo "📁 Directorio: $(pwd)"
-          echo "👤 Usuario: $(whoami)"
+          echo "Server: $(hostname)"
+          echo "User: $(whoami)"
+          echo "Project dir: /data/nanlomo"
+          ls -la /data/nanlomo
 
-      - name: � Navegar al proyecto
-        run: |
-          echo "📁 Navegando a /data/nanlomo"
-          cd /data/nanlomo
-          pwd
-
-      - name: 🔄 Actualizar código
-        run: |
-          echo "📥 Pulling latest code..."
-          cd /data/nanlomo
-          git pull origin 001-restaurant-system
-
-      - name: 🔐 Login a Docker Hub
+      - name: Login to Docker Hub
         run: |
           cd /data/nanlomo
           set -a
           source .env
           set +a
-          echo "🔐 Logging in to Docker Hub..."
+          echo "Logging in to Docker Hub..."
           docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
 
-      - name: 📦 Pull Docker images
+      - name: Pull Docker images
         run: |
           cd /data/nanlomo
-          echo "📦 Pulling backend image..."
+          echo "Pulling backend image..."
           docker pull mambru94/nanlomo-backend:latest
-          echo "📦 Pulling frontend image..."
+          echo "Pulling frontend image..."
           docker pull mambru94/nanlomo-frontend:latest
 
-      - name: 🔄 Restart services
+      - name: Restart services
         run: |
           cd /data/nanlomo
-          echo "🛑 Stopping services..."
+          echo "Stopping services..."
           docker compose down
-          echo "🚀 Starting services..."
+          echo "Starting services..."
           docker compose up -d
 
-      - name: ⏳ Wait for services
+      - name: Wait for services
         run: sleep 15
 
-      - name: ✅ Health check backend
+      - name: Health check
         run: |
-          echo "🔍 Checking backend health..."
+          echo "Checking backend health..."
           curl -f http://localhost:3002/health || exit 1
-          echo "✅ Backend is healthy!"
+          echo "Backend is healthy!"
 
-      - name: 🎉 Deploy complete
+      - name: Deploy complete
         run: |
-          echo "✅ Deploy completado exitosamente!"
-          cd /data/nanlomo
-          echo "📝 Último commit desplegado:"
-          git log -1 --pretty=format:"%h - %s (%an)"
+          echo "Deploy completed successfully!"
+          echo "Images updated from Docker Hub"
+          echo "Services running in production"
