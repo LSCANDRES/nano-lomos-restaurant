@@ -1,59 +1,160 @@
-name: Deploy to LAN Server
+name: Build & Deploy (Optimized)
 
 on:
   push:
-    branches: [ master, main, 001-restaurant-system ]
+    branches:
+      - master
+      - main
   workflow_dispatch:
 
+env:
+  DEPLOY_PATH: /data/nanlomo
+  IMAGE_BACKEND: mambru94/nanlomo-backend
+  IMAGE_FRONTEND: mambru94/nanlomo-frontend
+
 jobs:
-  deploy:
-    name: Deploy to Production
-    runs-on: self-hosted
+  build-and-deploy:
+    name: 🔨 Build & 🚀 Deploy
+    runs-on: [self-hosted, Linux, X64, nanlomo]
     
     steps:
-      - name: Verify location
+      # ========== CHECKOUT ==========
+      - name: Clean workspace
         run: |
-          echo "Server: $(hostname)"
-          echo "User: $(whoami)"
-          echo "Project dir: /data/nanlomo"
-          ls -la /data/nanlomo
+          echo "🧹 Cleaning workspace..."
+          rm -rf ./* ./.??* 2>/dev/null || true
 
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ========== DOCKER LOGIN ==========
       - name: Login to Docker Hub
         run: |
-          cd /data/nanlomo
-          set -a
-          source .env
-          set +a
-          echo "Logging in to Docker Hub..."
-          docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+          cd ${{ env.DEPLOY_PATH }}
+          if [ -f .env ]; then
+            set -a
+            source .env
+            set +a
+          fi
+          
+          if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
+            echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+            echo "✅ Docker login successful"
+          else
+            echo "❌ Docker credentials not found in .env"
+            exit 1
+          fi
 
-      - name: Pull Docker images
+      # ========== BUILD BACKEND ==========
+      - name: Build Backend
         run: |
-          cd /data/nanlomo
-          echo "Pulling backend image..."
-          docker pull mambru94/nanlomo-backend:latest
-          echo "Pulling frontend image..."
-          docker pull mambru94/nanlomo-frontend:latest
+          echo "🔨 Building backend image..."
+          docker build \
+            -t ${{ env.IMAGE_BACKEND }}:latest \
+            -f backend/Dockerfile \
+            backend/
+          echo "✅ Backend built: ${{ env.IMAGE_BACKEND }}:latest"
 
-      - name: Restart services
+      # ========== BUILD FRONTEND ==========
+      - name: Build Frontend
         run: |
-          cd /data/nanlomo
-          echo "Stopping services..."
-          docker compose down
-          echo "Starting services..."
+          echo "🔨 Building frontend image..."
+          docker build \
+            -t ${{ env.IMAGE_FRONTEND }}:latest \
+            -f frontend/Dockerfile \
+            frontend/
+          echo "✅ Frontend built: ${{ env.IMAGE_FRONTEND }}:latest"
+
+      # ========== PUSH TO DOCKERHUB ==========
+      - name: Push images to DockerHub
+        run: |
+          echo "📤 Pushing images to DockerHub..."
+          
+          docker push ${{ env.IMAGE_BACKEND }}:latest
+          echo "✅ Backend pushed"
+          
+          docker push ${{ env.IMAGE_FRONTEND }}:latest
+          echo "✅ Frontend pushed"
+
+      # ========== RESTART CONTAINERS ==========
+      - name: Restart containers
+        run: |
+          cd ${{ env.DEPLOY_PATH }}
+          echo "🛑 Stopping old containers..."
+          docker compose down --remove-orphans 2>/dev/null || true
+          
+          echo "🚀 Starting new containers..."
           docker compose up -d
 
+      # ========== HEALTH CHECK ==========
       - name: Wait for services
-        run: sleep 15
-
-      - name: Health check
         run: |
-          echo "Checking backend health..."
-          curl -f http://localhost:3002/health || exit 1
-          echo "Backend is healthy!"
+          echo "⏳ Waiting for services to initialize..."
+          sleep 10
 
-      - name: Deploy complete
+      - name: Health check - Backend
         run: |
-          echo "Deploy completed successfully!"
-          echo "Images updated from Docker Hub"
-          echo "Services running in production"
+          echo "🏥 Checking backend health..."
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            STATUS=$(docker inspect -f '{{.State.Status}}' nanlomo-backend 2>/dev/null || echo "not_found")
+            if [ "$STATUS" = "running" ]; then
+              if curl -f http://localhost:3002/api/health 2>&1 | grep -q "ok"; then
+                echo "✅ Backend is healthy!"
+                exit 0
+              fi
+            fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "Waiting for backend... (attempt $RETRY_COUNT/$MAX_RETRIES, status: $STATUS)"
+            sleep 5
+          done
+          
+          echo "⚠️ Backend health check timed out, checking logs..."
+          docker logs nanlomo-backend --tail 30
+          exit 1
+
+      - name: Health check - Frontend
+        run: |
+          echo "🏥 Checking frontend health..."
+          if curl -f http://localhost:80 > /dev/null 2>&1; then
+            echo "✅ Frontend is healthy!"
+          else
+            echo "⚠️ Frontend health check failed"
+            docker logs nanlomo-frontend --tail 30
+            exit 1
+          fi
+
+      # ========== STATUS ==========
+      - name: Show container status
+        run: |
+          cd ${{ env.DEPLOY_PATH }}
+          echo "📊 Container Status:"
+          docker compose ps
+          echo ""
+          echo "📋 Recent backend logs:"
+          docker logs nanlomo-backend --tail 10 2>&1 || true
+
+      - name: Cleanup old images
+        run: |
+          echo "🧹 Cleaning up old images..."
+          docker image prune -f || true
+
+      # ========== SUMMARY ==========
+      - name: Deployment Summary
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          COMMIT_SHA="${{ github.sha }}"
+          echo ""
+          echo "=========================================="
+          echo "🎉 BUILD & DEPLOYMENT COMPLETE!"
+          echo "=========================================="
+          echo "Commit: ${COMMIT_SHA:0:7}"
+          echo "Message: $COMMIT_MSG"
+          echo "Backend: ${{ env.IMAGE_BACKEND }}:latest"
+          echo "Frontend: ${{ env.IMAGE_FRONTEND }}:latest"
+          echo "URL: http://192.168.100.35"
+          echo "=========================================="

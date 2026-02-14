@@ -1,0 +1,59 @@
+name: Deploy to LAN Server
+
+on:
+  push:
+    branches: [ master, main, 001-restaurant-system ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: self-hosted
+    
+    steps:
+      - name: Verify location
+        run: |
+          echo "Server: $(hostname)"
+          echo "User: $(whoami)"
+          echo "Project dir: /data/nanlomo"
+          ls -la /data/nanlomo
+
+      - name: Login to Docker Hub
+        run: |
+          cd /data/nanlomo
+          set -a
+          source .env
+          set +a
+          echo "Logging in to Docker Hub..."
+          docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+
+      - name: Pull Docker images
+        run: |
+          cd /data/nanlomo
+          echo "Pulling backend image..."
+          docker pull mambru94/nanlomo-backend:latest
+          echo "Pulling frontend image..."
+          docker pull mambru94/nanlomo-frontend:latest
+
+      - name: Restart services
+        run: |
+          cd /data/nanlomo
+          echo "Stopping services..."
+          docker compose down
+          echo "Starting services..."
+          docker compose up -d
+
+      - name: Wait for services
+        run: sleep 15
+
+      - name: Health check
+        run: |
+          echo "Checking backend health..."
+          curl -f http://localhost:3002/health || exit 1
+          echo "Backend is healthy!"
+
+      - name: Deploy complete
+        run: |
+          echo "Deploy completed successfully!"
+          echo "Images updated from Docker Hub"
+          echo "Services running in production"

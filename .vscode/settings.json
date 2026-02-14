@@ -12,7 +12,8 @@
         "/^Set-Location 'd:\\\\Archivos Frecuentes\\\\restaurante\\\\backend'; node src/database/seeds/index\\.js$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "&": true
     }
 }
 
