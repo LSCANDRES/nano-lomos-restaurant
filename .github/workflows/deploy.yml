@@ -1,72 +1,185 @@
-name: CD - Deploy a Producción
+name: Build & Deploy NanLomo
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:  # Permite deploy manual desde GitHub Mobile
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DEPLOY_PATH: /data/nanlomo
+  IMAGE_BACKEND: mambru94/nanlomo-backend
+  IMAGE_FRONTEND: mambru94/nanlomo-frontend
 
 jobs:
-  deploy:
-    name: 🚀 Deploy to Production
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://nanlomo.tudominio.com
+  build-and-deploy:
+    name: 🔨 Build & 🚀 Deploy
+    runs-on: [self-hosted, linux]
 
     steps:
-      - name: 📥 Checkout code
+      # ========== CHECKOUT ==========
+      - name: Clean workspace
+        run: |
+          echo "🧹 Cleaning workspace..."
+          rm -rf ./* ./.??* 2>/dev/null || true
+
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          fetch-depth: 0
 
-      - name: 📦 Install dependencies
+      # ========== VERSION ==========
+      - name: Get and increment version
+        id: version
         run: |
-          cd backend && npm ci --production
-          cd ../frontend && npm ci
+          VERSION_FILE="docker/deploy/version.json"
+          if [ -f "$VERSION_FILE" ]; then
+            MAJOR=$(jq -r '.major' $VERSION_FILE)
+            MINOR=$(jq -r '.minor' $VERSION_FILE)
+            PATCH=$(jq -r '.patch' $VERSION_FILE)
 
-      - name: 🔨 Build frontend
+            # Increment patch version
+            NEW_PATCH=$((PATCH + 1))
+            VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+
+            # Update version file
+            jq ".patch = $NEW_PATCH" $VERSION_FILE > tmp.json && mv tmp.json $VERSION_FILE
+          else
+            VERSION="latest"
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Building version: $VERSION"
+
+      # ========== DOCKER LOGIN ==========
+      - name: Login to Docker Hub
         run: |
-          cd frontend
-          npm run build
+          cd ${{ env.DEPLOY_PATH }}
+          if [ -f .env ]; then
+            set -a
+            source .env
+            set +a
+          fi
 
-      - name: 🐳 Build Docker images
+          if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
+            echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+            echo "✅ Docker login successful"
+          else
+            echo "❌ Docker credentials not found in .env"
+            exit 1
+          fi
+
+      # ========== BUILD BACKEND ==========
+      - name: Build Backend
         run: |
-          cd docker
-          docker-compose build
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "🔨 Building backend image..."
+          docker build \
+            -t ${{ env.IMAGE_BACKEND }}:$VERSION \
+            -t ${{ env.IMAGE_BACKEND }}:latest \
+            -f docker/Dockerfile.backend \
+            .
+          echo "✅ Backend built: ${{ env.IMAGE_BACKEND }}:$VERSION"
 
-      - name: 📤 Deploy via SSH (opcional)
+      # ========== BUILD FRONTEND ==========
+      - name: Build Frontend
         run: |
-          echo "🚀 Desplegando a servidor de producción..."
-          # Aquí irían los comandos SSH para desplegar al servidor
-          # Por ejemplo: scp, rsync, docker push, etc.
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "🔨 Building frontend image..."
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=https://MI_DOMINIO/api \
+            -t ${{ env.IMAGE_FRONTEND }}:$VERSION \
+            -t ${{ env.IMAGE_FRONTEND }}:latest \
+            -f docker/Dockerfile.frontend \
+            .
+          echo "✅ Frontend built: ${{ env.IMAGE_FRONTEND }}:$VERSION"
 
-      - name: ✅ Deployment successful
+      # ========== PUSH TO DOCKERHUB ==========
+      - name: Push images to DockerHub
         run: |
-          echo "✅ Deployment completed successfully!"
-          echo "🌐 Application is now live"
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "📤 Pushing images to DockerHub..."
 
-      - name: 📱 Notificar en Discord/Slack (opcional)
+          docker push ${{ env.IMAGE_BACKEND }}:$VERSION
+          docker push ${{ env.IMAGE_BACKEND }}:latest
+          echo "✅ Backend pushed"
+
+          docker push ${{ env.IMAGE_FRONTEND }}:$VERSION
+          docker push ${{ env.IMAGE_FRONTEND }}:latest
+          echo "✅ Frontend pushed"
+
+      # ========== UPDATE COMPOSE ==========
+      - name: Update docker-compose with version
         run: |
-          echo "📱 Notificación de deploy enviada"
+          cd ${{ env.DEPLOY_PATH }}
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "📝 Updating docker-compose.yml with version $VERSION..."
+          sed -i "s|${{ env.IMAGE_BACKEND }}:.*|${{ env.IMAGE_BACKEND }}:$VERSION|g" docker-compose.yml
+          sed -i "s|${{ env.IMAGE_FRONTEND }}:.*|${{ env.IMAGE_FRONTEND }}:$VERSION|g" docker-compose.yml
+          echo "Current images in compose:"
+          grep "image:" docker-compose.yml
 
-  health-check:
-    name: 🏥 Health Check
-    needs: deploy
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 🔍 Check backend health
+      # ========== RESTART CONTAINERS ==========
+      - name: Restart containers
         run: |
-          echo "Checking backend health..."
-          # curl https://api.nanlomo.tudominio.com/health || exit 1
+          cd ${{ env.DEPLOY_PATH }}
+          echo "🛑 Stopping old containers..."
+          docker stop mi-app-backend mi-app-frontend 2>/dev/null || true
+          docker rm mi-app-backend mi-app-frontend 2>/dev/null || true
+          docker compose down --remove-orphans 2>/dev/null || true
+          echo "🚀 Starting new containers..."
+          docker compose up -d
 
-      - name: 🔍 Check frontend availability
+      # ========== HEALTH CHECK ==========
+      - name: Wait for services
         run: |
-          echo "Checking frontend availability..."
-          # curl https://nanlomo.tudominio.com || exit 1
+          echo "⏳ Waiting for services to initialize..."
+          sleep 10
 
-      - name: ✅ Health checks passed
-        run: echo "✅ All services are healthy"
+      - name: Health check - Backend
+        run: |
+          echo "🏥 Checking backend health..."
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            STATUS=$(docker inspect -f '{{.State.Status}}' mi-app-backend 2>/dev/null || echo "not_found")
+            if [ "$STATUS" = "running" ]; then
+              echo "✅ Backend is healthy!"
+              exit 0
+            fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "Waiting for backend... (attempt $RETRY_COUNT/$MAX_RETRIES, status: $STATUS)"
+            sleep 5
+          done
+
+          echo "⚠️ Backend health check timed out, checking logs..."
+          docker logs mi-app-backend --tail 30
+          exit 1
+
+      # ========== STATUS ==========
+      - name: Show container status
+        run: |
+          cd ${{ env.DEPLOY_PATH }}
+          echo "📊 Container Status:"
+          docker compose ps
+          echo ""
+          echo "📋 Recent backend logs:"
+          docker logs mi-app-backend --tail 10 2>&1 || true
+
+      - name: Cleanup old images
+        run: |
+          echo "🧹 Cleaning up old images..."
+          docker image prune -f || true
+
+      # ========== SUMMARY ==========
+      - name: Deployment Summary
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "🎉 BUILD & DEPLOYMENT COMPLETE!"
+          echo "=========================================="
+          echo "Version: ${{ steps.version.outputs.version }}"
+          echo "Backend: ${{ env.IMAGE_BACKEND }}:${{ steps.version.outputs.version }}"
+          echo "Frontend: ${{ env.IMAGE_FRONTEND }}:${{ steps.version.outputs.version }}"
+          echo "URL: https://MI_DOMINIO"
+          echo "=========================================="

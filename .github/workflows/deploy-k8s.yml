@@ -1,0 +1,73 @@
+name: Build & Deploy to Kubernetes
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  IMAGE_BACKEND: mambru94/nanlomo-backend
+  IMAGE_FRONTEND: mambru94/nanlomo-frontend
+  DEPLOY_BACKEND: nanolomos-backend
+  DEPLOY_FRONTEND: nanolomos-frontend
+  NAMESPACE: development
+  SITE_URL: https://nanolomos.cals.com.ar
+  FRONTEND_API_URL: https://nanolomos.cals.com.ar/api
+  DOCKERFILE_BACKEND: docker/Dockerfile.backend
+  DOCKERFILE_FRONTEND: docker/Dockerfile.frontend
+  KUBECONFIG: /home/andres-luna/.kube/config
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy
+    runs-on: [self-hosted, linux]
+
+    steps:
+      - name: Clean workspace
+        run: rm -rf ./* ./.??* 2>/dev/null || true
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Login to Docker Hub
+        run: |
+          if [ -f /data/nanolomos/.env ]; then
+            set -a && source /data/nanolomos/.env && set +a
+          fi
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+
+      - name: Build & Push Backend
+        run: |
+          docker build -t ${{ env.IMAGE_BACKEND }}:latest -f ${{ env.DOCKERFILE_BACKEND }} .
+          docker push ${{ env.IMAGE_BACKEND }}:latest
+
+      - name: Build & Push Frontend
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=${{ env.FRONTEND_API_URL }} \
+            -t ${{ env.IMAGE_FRONTEND }}:latest \
+            -f ${{ env.DOCKERFILE_FRONTEND }} .
+          docker push ${{ env.IMAGE_FRONTEND }}:latest
+
+      - name: Restart Kubernetes Pods
+        run: |
+          kubectl --kubeconfig=${{ env.KUBECONFIG }} rollout restart deployment/${{ env.DEPLOY_BACKEND }} -n ${{ env.NAMESPACE }}
+          kubectl --kubeconfig=${{ env.KUBECONFIG }} rollout restart deployment/${{ env.DEPLOY_FRONTEND }} -n ${{ env.NAMESPACE }}
+
+      - name: Wait for rollout
+        run: |
+          kubectl --kubeconfig=${{ env.KUBECONFIG }} rollout status deployment/${{ env.DEPLOY_BACKEND }} -n ${{ env.NAMESPACE }} --timeout=120s
+          kubectl --kubeconfig=${{ env.KUBECONFIG }} rollout status deployment/${{ env.DEPLOY_FRONTEND }} -n ${{ env.NAMESPACE }} --timeout=120s
+
+      - name: Health Check
+        run: |
+          sleep 5
+          BACKEND=$(kubectl --kubeconfig=${{ env.KUBECONFIG }} get deployment/${{ env.DEPLOY_BACKEND }} -n ${{ env.NAMESPACE }} -o jsonpath='{.status.readyReplicas}')
+          FRONTEND=$(kubectl --kubeconfig=${{ env.KUBECONFIG }} get deployment/${{ env.DEPLOY_FRONTEND }} -n ${{ env.NAMESPACE }} -o jsonpath='{.status.readyReplicas}')
+          test "$BACKEND" = "1" && test "$FRONTEND" = "1"
+
+      - name: Cleanup
+        run: docker image prune -f || true

@@ -1,41 +1,52 @@
 version: '3.8'
 
+# Docker Compose para MI_APP
+# Backend + Frontend (build local)
+
 services:
-  nanlomo-backend:
-    image: mambru94/nanlomo-backend:latest
-    container_name: nanlomo-backend
+  mi-app-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: mi-app-backend
     restart: unless-stopped
     ports:
-      - "3002:3002"
+      - "3001:3001"
     extra_hosts:
       - "postgres-server:192.168.100.35"
     environment:
       NODE_ENV: production
-      PORT: 3002
+      PORT: 3001
       DB_HOST: postgres-server
       DB_PORT: ${DB_PORT:-5433}
       DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME:-NANOLOMOS}
+      DB_PASS: ${DB_PASS}
+      DB_NAME: ${DB_NAME:-MI_DB}
       JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-30m}
-      SESSION_TIMEOUT_MINUTES: ${SESSION_TIMEOUT_MINUTES:-30}
-      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}
-      CORS_ORIGIN: ${CORS_ORIGIN:-https://nanolomos.cals.com.ar}
-      WS_PING_INTERVAL: ${WS_PING_INTERVAL:-25000}
-      WS_PING_TIMEOUT: ${WS_PING_TIMEOUT:-5000}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JWT_EXPIRES_IN: 7d
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      FRONTEND_URL: https://MI_DOMINIO
+      CORS_ORIGINS: https://MI_DOMINIO
+      EMAIL_USER: ${EMAIL_USER}
+      EMAIL_PASS: ${EMAIL_PASS}
     networks:
       - docker
 
-  nanlomo-frontend:
-    image: mambru94/nanlomo-frontend:latest
-    container_name: nanlomo-frontend
+  mi-app-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://MI_DOMINIO/api
+    container_name: mi-app-frontend
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://MI_DOMINIO/api
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
     depends_on:
-      - nanlomo-backend
+      - mi-app-backend
     networks:
       - docker
 

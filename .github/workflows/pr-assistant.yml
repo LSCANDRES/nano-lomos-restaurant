@@ -1,0 +1,81 @@
+name: PR Assistant
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  pr-info:
+    name: 📝 PR Info
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files stats
+        id: changes
+        run: |
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l)
+          BACKEND_CHANGES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep "^backend/" | wc -l)
+          FRONTEND_CHANGES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep "^frontend/" | wc -l)
+          DOCKER_CHANGES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep "^docker/" | wc -l)
+
+          echo "total=$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "backend=$BACKEND_CHANGES" >> $GITHUB_OUTPUT
+          echo "frontend=$FRONTEND_CHANGES" >> $GITHUB_OUTPUT
+          echo "docker=$DOCKER_CHANGES" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            // Find existing bot comment
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('📊 PR Analysis')
+            );
+
+            const body = `## 📊 PR Analysis
+
+            | Area | Files Changed |
+            |------|--------------|
+            | 🔧 Backend | ${{ steps.changes.outputs.backend }} |
+            | 🎨 Frontend | ${{ steps.changes.outputs.frontend }} |
+            | 🐳 Docker | ${{ steps.changes.outputs.docker }} |
+            | **Total** | **${{ steps.changes.outputs.total }}** |
+
+            ### 📱 Review from GitHub Mobile
+            1. Check the **Files changed** tab
+            2. Review CI status below
+            3. Approve and merge when ready!
+
+            ---
+            *🤖 This comment is auto-generated and will update on each push*`;
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }

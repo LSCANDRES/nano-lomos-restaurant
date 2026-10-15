@@ -1,0 +1,63 @@
+# ====================================================================
+# Configuración Centralizada de Restaurante (Plantilla Multi-Local)
+# ====================================================================
+# Al cambiar los valores de este archivo y ejecutar `scripts/setup-restaurant.ps1`,
+# el sistema se configura automáticamente para cualquier otro local o franquicia.
+
+restaurant:
+  id: "nanolomos"                           # Identificador único (slug, en minúsculas)
+  name: "Nano Lomos Restaurant"             # Nombre comercial que verá el staff
+  tagline: "Lomitos y Comida Rápida"        # Subtítulo / eslogan
+  currency:
+    symbol: "$"                             # Símbolo monetario mostrado en comandas y caja
+    code: "ARS"                             # Código ISO (ARS, USD, EUR, etc.)
+  timezone: "America/Argentina/Buenos_Aires"
+  
+  # Reglas operativas del local
+  operations:
+    hasPhysicalTables: false                # false: Modo Mostrador / Takeaway / Delivery directo (sin salón de mesas)
+    orderModes: ["mostrador", "takeaway", "delivery"] # Modalidades admitidas
+    alertDelayMinutes: 20                   # Minutos antes de marcar comanda en rojo por demora
+    autoDeductStockOnPayment: true          # Descontar stock de ingredientes automáticamente al cobrar
+    requireReasonOnCancel: true             # Exigir motivo obligatorio al cancelar pedidos
+    whatsapp:
+      enabled: true                         # Notificaciones y avisos automáticos por WhatsApp
+      phonePrefix: "+54"                    # Prefijo telefónico predeterminado (Argentina)
+      notifyOnReady: true                   # Notificar al cliente cuando su pedido esté listo para retirar o en camino
+
+# Infraestructura y Despliegue
+deployment:
+  domain: "nanolomos.cals.com.ar"          # Dominio para Nginx / producción
+  environment: "development"               # development | production
+  
+  network:
+    backendPort: 3007                      # Puerto local del backend Express
+    frontendPort: 4007                     # Puerto local del frontend Next.js
+  
+  database:
+    name: "NANOLOMOS"                      # Nombre de la base de datos PostgreSQL
+    host: "localhost"                      # Host (localhost en dev o IP del servidor)
+    port: 5433                             # Puerto de PostgreSQL
+    user: "postgres"                       # Usuario DB
+    password: "change_in_production"       # Contraseña DB (o se inyecta desde variable secreta)
+
+  auth:
+    googleOAuth:
+      enabled: true
+      clientId: ""
+      clientSecret: ""
+
+# Mesas iniciales para el salón
+initialTables:
+  - { number: "1", name: "Mesa 1", capacity: 4, position_x: 10, position_y: 10 }
+  - { number: "2", name: "Mesa 2", capacity: 4, position_x: 20, position_y: 10 }
+  - { number: "3", name: "Mesa 3", capacity: 2, position_x: 30, position_y: 10 }
+  - { number: "4", name: "Mesa 4", capacity: 6, position_x: 10, position_y: 30 }
+  - { number: "5", name: "Mesa 5", capacity: 4, position_x: 20, position_y: 30 }
+  - { number: "BARRA", name: "Barra / Mostrador", capacity: 10, position_x: 30, position_y: 30 }
+
+# Usuarios iniciales de staff para crear en el despliegue
+initialUsers:
+  - { username: "admin", role: "manager", fullName: "Gerente del Local", defaultPass: "admin123" }
+  - { username: "cocinero1", role: "cook", fullName: "Cocinero Principal", defaultPass: "cocina123" }
+  - { username: "mozo1", role: "order_taker", fullName: "Mozo Turno Tarde", defaultPass: "pedidos123" }

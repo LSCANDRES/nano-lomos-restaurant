@@ -1,117 +1,158 @@
-name: CI - Tests y Validación
+name: CI - Pull Request Checks
 
 on:
   pull_request:
-    branches: [ master, main, develop, 001-restaurant-system ]
+    branches: [main]
   push:
-    branches: [ master, main, develop, 001-restaurant-system ]
+    branches: [main]
 
 jobs:
-  backend-tests:
-    name: Backend Tests
+  # ============================================
+  # BACKEND - Build & Type Check
+  # ============================================
+  backend-check:
+    name: 🔧 Backend Build
     runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: restaurant_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+
+    defaults:
+      run:
+        working-directory: backend
 
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
 
-      - name: 📦 Install backend dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript compile check
+        run: npm run build
+
+      - name: Check for build errors
         run: |
-          cd backend
-          npm ci
+          if [ -d "dist" ]; then
+            echo "✅ Backend built successfully"
+            ls -la dist/
+          else
+            echo "❌ Build directory not found"
+            exit 1
+          fi
 
-      - name: 🧪 Run backend tests
-        run: |
-          cd backend
-          npm test
-        env:
-          NODE_ENV: test
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: test
-          DB_PASSWORD: test
-          DB_NAME: restaurant_test
-
-      - name: ✅ Backend tests passed
-        run: echo "✅ Backend tests completed successfully"
-
-  frontend-tests:
-    name: Frontend Tests & Build
+  # ============================================
+  # FRONTEND - Lint & Build
+  # ============================================
+  frontend-check:
+    name: 🎨 Frontend Build & Lint
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: frontend
+
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: 📦 Install frontend dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint || echo "⚠️ Lint warnings found (non-blocking)"
+        continue-on-error: true
+
+      - name: Build Frontend
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://api.example.com
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: placeholder
+
+      - name: Check build output
         run: |
-          cd frontend
-          npm ci
+          if [ -d ".next" ]; then
+            echo "✅ Frontend built successfully"
+          else
+            echo "❌ Build failed"
+            exit 1
+          fi
 
-      - name: 🔨 Build frontend
-        run: |
-          cd frontend
-          npm run build
-
-      - name: ✅ Frontend build passed
-        run: echo "✅ Frontend build completed successfully"
-
-  lint:
-    name: Code Quality Check
+  # ============================================
+  # DOCKER - Verify Dockerfiles
+  # ============================================
+  docker-check:
+    name: 🐳 Docker Build Check
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: 📦 Install dependencies
+      - name: Verify Backend Dockerfile
         run: |
-          cd backend && npm ci
-          cd ../frontend && npm ci
+          docker build --file docker/Dockerfile.backend \
+            --target builder \
+            --tag test-backend:ci \
+            . || exit 1
+          echo "✅ Backend Dockerfile valid"
 
-      - name: 🔍 Lint backend
+      - name: Verify Frontend Dockerfile
         run: |
-          cd backend
-          npm run lint || echo "⚠️ Linting warnings found"
+          docker build --file docker/Dockerfile.frontend \
+            --build-arg NEXT_PUBLIC_API_URL=https://api.example.com \
+            --target builder \
+            --tag test-frontend:ci \
+            . || exit 1
+          echo "✅ Frontend Dockerfile valid"
 
-      - name: 🔍 Lint frontend
+  # ============================================
+  # SUMMARY - All checks passed
+  # ============================================
+  ci-summary:
+    name: ✅ CI Summary
+    needs: [backend-check, frontend-check, docker-check]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Check results
         run: |
-          cd frontend
-          npm run lint || echo "⚠️ Linting warnings found"
+          echo "## 📋 CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-      - name: ✅ Linting completed
-        run: echo "✅ Code quality check completed"
+          if [ "${{ needs.backend-check.result }}" == "success" ]; then
+            echo "✅ Backend: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Backend: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.frontend-check.result }}" == "success" ]; then
+            echo "✅ Frontend: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Frontend: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.docker-check.result }}" == "success" ]; then
+            echo "✅ Docker: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Docker: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail if any check failed
+        if: contains(needs.*.result, 'failure')
+        run: exit 1

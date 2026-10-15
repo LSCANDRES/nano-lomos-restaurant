@@ -1,67 +1,67 @@
-# Environment variables
+# Env files
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+backend/.env
+frontend/.env.local
 
-# Logs
-logs
-*.log
+# Node/Next artifacts
+**/node_modules/
+**/.next/
+**/dist/
+**/.turbo/
+**/.cache/
+**/coverage/
 npm-debug.log*
-yarn-debug.log*
 yarn-error.log*
-lerna-debug.log*
+
+# Docker runtime outputs (certs, webroot, logs)
+docker/certificados/
+docker/certbot-webroot/
+docker/letsencrypt/
+docker/logs/
+
+# Local certs or test files
+docker/fullchain.pem
+docker/cert.pfx
 
 # Dependencies
 node_modules/
-.pnp
-.pnp.js
 
-# Testing
-coverage/
-.nyc_output
+# Legacy code (archived)
+legacy/
 
-# Build outputs
-dist/
-build/
-*.tsbuildinfo
-
-# IDEs
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
-.idea/
-*.swp
-*.swo
-*~
+# Prisma
+*.db
+*.db-journal
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Uploads
-backend/public/uploads/*
-!backend/public/uploads/.gitkeep
-frontend/public/uploads/*
-!frontend/public/uploads/.gitkeep
+# Local AI agents and skills
+.agents/
+skills/
+AGENTS.md
+AGENTS_AND_SKILLS.md
 
-# Media files (videos, large images)
-*.mp4
-*.avi
-*.mov
-*.wmv
-*.flv
+# IDEs
+.vscode/
+.idea/
 
-# Database
-*.db
-*.sqlite
+# Logs
+logs/
+*.log
 
-# Temporary files
-tmp/
-temp/
-*.tmp
+# IDE
+.vscode/
+.idea/
 
-# Docker
-.dockerignore
+# OS
+.DS_Store
+Thumbs.db
 
-# Misc
-.specify/
+# AI Contexts: adaptadores locales; fuentes versionables en el repositorio central.
+/.codex/skills/
+/.opencode/skills/
+/.opencode/agents/

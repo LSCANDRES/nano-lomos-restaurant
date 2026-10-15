@@ -1,0 +1,47 @@
+version: '3.8'
+
+# Docker Compose Producción - MI_APP
+# Usa imágenes pre-buildeadas de DockerHub
+
+services:
+  mi-app-backend:
+    image: DOCKER_USER/mi-app-backend:latest
+    container_name: mi-app-backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    extra_hosts:
+      - "postgres-server:192.168.100.35"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres-server
+      DB_PORT: ${DB_PORT:-5433}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASS}
+      DB_NAME: ${DB_NAME:-MI_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: 7d
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      FRONTEND_URL: https://MI_DOMINIO
+      CORS_ORIGINS: https://MI_DOMINIO
+      EMAIL_USER: ${EMAIL_USER}
+      EMAIL_PASS: ${EMAIL_PASS}
+    networks:
+      - docker
+
+  mi-app-frontend:
+    image: DOCKER_USER/mi-app-frontend:latest
+    container_name: mi-app-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    depends_on:
+      - mi-app-backend
+    networks:
+      - docker
+
+networks:
+  docker:
+    external: true

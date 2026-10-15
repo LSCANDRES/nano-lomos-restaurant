@@ -1,0 +1,2 @@
+node_modules
+# Keep environment variables in .env, but don't commit the file.

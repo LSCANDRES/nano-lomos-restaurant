@@ -1,0 +1,29 @@
+version: '3.8'
+
+# Docker Compose SOLO para Nginx Central
+# Los servicios de cada aplicación se levantan en su propio docker-compose
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-central
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "5443:5443"
+    volumes:
+      # Configuraciones de Nginx (editable desde host)
+      - ./conf:/etc/nginx/conf.d:ro
+      # Certificados SSL (editable/visible desde host)
+      - ./certificados:/etc/nginx/ssl:ro
+      # Webroot para Let's Encrypt challenge (compartido con certbot)
+      - ./certbot-webroot:/var/www/certbot:ro
+      # Logs
+      - ./logs:/var/log/nginx
+    networks:
+      - docker
+
+networks:
+  docker:
+    external: true

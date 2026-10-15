@@ -1,3 +1,131 @@
+# Nano Lomos Restaurant Management System
+
+Sistema de gestión interna para restaurante de comida rápida. Controla pedidos, inventario, cocina y estadísticas.
+
+## Stack
+
+- **Backend**: Node.js + Express + TypeScript + Prisma + PostgreSQL
+- **Frontend**: Next.js 14 + React + TypeScript + Tailwind CSS  
+- **Auth**: JWT + Google OAuth + email verification
+- **Real-time**: Socket.io (pedidos y cocina)
+- **Monitoring**: Grafana + Loki + Prometheus
+- **Deploy**: Docker + GitHub Actions
+
+## Estructura
+
+```
+restaurante/
+├── backend/               # API Express + TypeScript
+│   ├── src/
+│   │   ├── modules/       # Auth, Users, Menu, Orders, Kitchen, etc.
+│   │   ├── middleware/    # JWT, roles, error handling
+│   │   ├── lib/           # Prisma, logger, utils
+│   │   └── ws/            # WebSocket handlers
+│   └── prisma/            # Schema + migrations
+├── frontend/              # Next.js app
+│   └── app/
+│       ├── (auth)/        # Login, verify
+│       ├── manager/       # Dashboard, menu, inventory, reports
+│       ├── cook/          # Kitchen queue
+│       └── waiter/        # Orders, tables
+├── docker/                # Dockerfiles + nginx config
+├── monitoring/            # Grafana stack
+├── scripts/               # Backup/restore
+└── specs/                 # Docs (PROMPT, MIGRATION_PLAN)
+```
+
+## Quick Start (Desarrollo)
+
+### Requisitos
+- Node.js 20+
+- PostgreSQL (DB NANOLOMOS en 192.168.100.35:5433)
+- npm o pnpm
+
+### Setup
+
+1. Configurar variables:
+```bash
+cp .env.example .env
+# Editar .env con tus valores (DB, JWT secrets, Google OAuth, SMTP)
+```
+
+2. Backend:
+```bash
+cd backend
+npm install
+npm run prisma:generate
+npm run dev
+```
+
+3. Frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+4. Acceder:
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:3002/api
+- Health: http://localhost:3002/api/health
+
+## Producción (andres-server)
+
+Deploy en `192.168.100.35:/data/nanlomo/`  
+Dominio: https://nanolomos.cals.com.ar
+
+### Deploy manual
+
+```bash
+./deploy.ps1    # Windows
+./deploy.sh     # Linux/Mac
+```
+
+### Deploy automático
+
+Push a `main` → GitHub Actions → build + deploy
+
+## Roles y URLs
+
+- **Manager**: `/manager` — Dashboard, menú, inventario, reportes, usuarios, mesas
+- **Cook**: `/cook` — Cola de pedidos, marcar estados  
+- **Waiter**: `/waiter` — Tomar pedidos, mesas, cobrar
+
+## Base de Datos
+
+La DB `NANOLOMOS` ya existe con **datos reales**:
+- 29 items de menú
+- 27 ingredientes
+- 148 recetas
+
+**Backup pre-migración**: `/data/backups/nanolomos-backup-20260430-*.dump`
+
+## Documentación
+
+- [specs/PROMPT.md](specs/PROMPT.md) — Especificación del negocio
+- [specs/MIGRATION_PLAN.md](specs/MIGRATION_PLAN.md) — Plan de migración
+- [legacy/](legacy/) — Código anterior (Express+React v0)
+
+## Estado Actual
+
+**Fase 2 completa** ✅ Scaffolding terminado:
+- ✅ Estructura backend/frontend
+- ✅ Prisma schema generado desde DB
+- ✅ Dockerfiles adaptados
+- ✅ .env configurado (server + local)
+- ✅ nginx.conf listo (server:/data/repositorios/nginx/conf/nanlomo.conf.disabled)
+
+**Próximos pasos** (Fase 3+4):
+- [ ] Migración Prisma (ALTER users + tabla tables + login_history)
+- [ ] Auth module (JWT + Google OAuth + email)
+- [ ] Módulos de negocio (menu, orders, kitchen, etc.)
+- [ ] Frontend UI (login + dashboards por rol)
+- [ ] WebSocket real-time
+- [ ] Monitoring stack
+
+## License
+
+MIT
 # Sistema de Gestión de Restaurante
 
 Sistema web para gestión interna de restaurante: pedidos, cocina, inventario y reportes.
