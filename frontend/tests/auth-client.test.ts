@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import { api } from '../lib/api';
 
 describe('Frontend API Client & Session Logic', () => {
   it('Validación de formato de tokens JWT y roles permitidos', () => {
@@ -36,8 +37,7 @@ describe('Frontend API Client & Session Logic', () => {
     assert.strictEqual(headers['Authorization'], 'Bearer fake.jwt.token');
   });
 
-  it('Verificación de presencia de api.getToken() y api.getAccessToken()', async () => {
-    const { api } = await import('../lib/api');
+  it('Verificación de presencia de api.getToken() y api.getAccessToken()', () => {
     assert.strictEqual(typeof api.getToken, 'function');
     assert.strictEqual(typeof api.getAccessToken, 'function');
   });

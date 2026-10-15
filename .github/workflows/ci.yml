@@ -13,6 +13,23 @@ jobs:
   backend-check:
     name: 🔧 Backend Build
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nanolomos_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-disposable-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nanolomos_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:ci-disposable-only@127.0.0.1:5432/nanolomos_ci
+      JWT_SECRET: ci-access-secret-disposable-only-32-chars
+      JWT_REFRESH_SECRET: ci-refresh-secret-disposable-only-32-chars
 
     defaults:
       run:
@@ -34,6 +51,12 @@ jobs:
 
       - name: TypeScript compile check
         run: npm run build
+
+      - name: Prepare disposable database
+        run: npx prisma db push --skip-generate
+
+      - name: Run backend tests
+        run: npm test
 
       - name: Check for build errors
         run: |
@@ -79,6 +102,9 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://api.example.com
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: placeholder
+
+      - name: Run frontend tests
+        run: npm test
 
       - name: Check build output
         run: |

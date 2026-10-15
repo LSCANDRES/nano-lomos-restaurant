@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -p 4007",
     "lint": "eslint",
-    "test": "npx tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {
     "next": "16.2.4",
@@ -23,6 +23,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
+    "tsx": "^4.11.0",
     "typescript": "^5"
   }
 }
