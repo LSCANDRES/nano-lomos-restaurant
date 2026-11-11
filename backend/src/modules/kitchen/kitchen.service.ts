@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma';
 import { logger } from '../../lib/logger';
 import { emitOrderStatusChanged } from '../../lib/websocket';
+import { WhatsAppService } from '../whatsapp/whatsapp.service';
 
 export class KitchenService {
   /**
@@ -18,6 +19,13 @@ export class KitchenService {
         table_number: true,
         status: true,
         created_at: true,
+        customers: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
         order_lines: {
           select: {
             id: true,
@@ -57,6 +65,13 @@ export class KitchenService {
         created_at: true,
         assigned_at: true,
         started_at: true,
+        customers: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
         order_lines: {
           select: {
             id: true,
@@ -91,6 +106,13 @@ export class KitchenService {
         table_number: true,
         status: true,
         completed_at: true,
+        customers: {
+          select: {
+            first_name: true,
+            last_name: true,
+            phone: true,
+          },
+        },
         order_lines: {
           select: {
             id: true,
@@ -171,7 +193,12 @@ export class KitchenService {
    * Marcar pedido como listo para entregar al mozo
    */
   static async completeOrder(orderId: number, cookId: number) {
-    const order = await prisma.orders.findUnique({ where: { id: orderId } });
+    const order = await prisma.orders.findUnique({
+      where: { id: orderId },
+      include: {
+        customers: true,
+      },
+    });
     if (!order) throw new Error('Pedido no encontrado');
 
     if (order.assigned_cook_id !== cookId) {
@@ -194,7 +221,29 @@ export class KitchenService {
 
     logger.info({ orderId, cookId }, 'Pedido listo para entregar');
     emitOrderStatusChanged(updated);
-    return updated;
+
+    // REST-008: Alerta Automática de Pedido Listo por WhatsApp al Cliente
+    let whatsappNotified = false;
+    let whatsappPhone: string | null = null;
+    if (order.customers?.phone) {
+      try {
+        const customerName = order.customers.first_name || 'Estimado/a';
+        const orderLabel = order.table_number || `#${orderId}`;
+        const waText = `¡Hola ${customerName}! Tu pedido ${orderLabel} en *Nano Lomos* ya está *LISTO* en el mostrador. ¡Acercate a retirarlo caliente! 🍔🔥`;
+        WhatsAppService.sendMessage(order.customers.phone, waText);
+        whatsappNotified = true;
+        whatsappPhone = order.customers.phone;
+        logger.info({ orderId, phone: order.customers.phone }, 'WhatsApp automático enviado al cliente por pedido listo');
+      } catch (waErr) {
+        logger.warn({ waErr, orderId }, 'Fallo al enviar notificación automática de WhatsApp');
+      }
+    }
+
+    return {
+      ...updated,
+      whatsappNotified,
+      whatsappPhone,
+    };
   }
 
   /**

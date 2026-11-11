@@ -592,6 +592,8 @@ export interface Order {
     phone?: string | null;
     email?: string | null;
   } | null;
+  whatsappNotified?: boolean;
+  whatsappPhone?: string | null;
   created_at: string;
   assigned_at?: string | null;
   started_at?: string | null;

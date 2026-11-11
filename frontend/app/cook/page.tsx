@@ -115,8 +115,13 @@ export default function CookDashboard() {
 
   const handleCompleteOrder = async (orderId: number) => {
     try {
-      await api.completeKitchenOrder(orderId);
+      const res = await api.completeKitchenOrder(orderId);
       await loadKitchenData();
+      if (res?.whatsappNotified) {
+        setFeedback(`🔔 ¡Pedido #${orderId} en mostrador! Alerta de WhatsApp enviada a ${res.whatsappPhone || 'cliente'}.`);
+      } else {
+        setFeedback(`🔔 ¡Pedido #${orderId} marcado como listo para retirar.`);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error al marcar como listo';
       setFeedback(msg);
@@ -273,6 +278,11 @@ export default function CookDashboard() {
                         <span className="text-[10px] text-zinc-500 font-bold uppercase mt-1 block">
                           Takeaway • {timeInfo.text}
                         </span>
+                        {order.customers?.phone && (
+                          <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 mt-0.5">
+                            📱 {order.customers.phone} {order.customers.first_name ? `(${order.customers.first_name})` : ''}
+                          </span>
+                        )}
                       </div>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
                         timeInfo.isLate ? 'bg-red-500 text-white' : 'bg-zinc-200 text-zinc-700'
@@ -353,6 +363,11 @@ export default function CookDashboard() {
                         <span className="text-[10px] text-zinc-500 font-bold uppercase mt-1 block">
                           Cocinando • {timeInfo.text}
                         </span>
+                        {order.customers?.phone && (
+                          <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 mt-0.5">
+                            📱 {order.customers.phone} {order.customers.first_name ? `(${order.customers.first_name})` : ''}
+                          </span>
+                        )}
                       </div>
                       <span className="px-2.5 py-0.5 rounded-full bg-[#FF5A00] text-white text-[10px] font-black uppercase">
                         PREPARANDO
@@ -432,6 +447,14 @@ export default function CookDashboard() {
                   <div className="text-xs text-zinc-600 font-medium">
                     {order.order_lines?.map((l) => `${l.quantity}x ${l.menu_items?.name}`).join(', ')}
                   </div>
+                  {order.customers?.phone && (
+                    <div className="flex items-center justify-between text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 mt-2">
+                      <span className="flex items-center gap-1">
+                        <span>📱 WhatsApp Notificado</span>
+                      </span>
+                      <span className="text-xs text-emerald-800 font-mono">{order.customers.phone}</span>
+                    </div>
+                  )}
                 </div>
               ))
             )}

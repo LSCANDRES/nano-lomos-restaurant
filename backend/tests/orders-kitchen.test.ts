@@ -167,4 +167,61 @@ describe('Orders & Kitchen Workflow Tests', () => {
     const body = await res.json() as any;
     assert.ok(body.error);
   });
+
+  it('REST-008: Al completar pedido en cocina se envía alerta automática de WhatsApp al cliente', async () => {
+    const { KitchenService } = await import('../src/modules/kitchen/kitchen.service');
+    const { prisma } = await import('../src/lib/prisma');
+
+    // 1. Obtener plato activo existente
+    const menuItem = await prisma.menu_items.findFirst({ where: { is_active: true } });
+    if (!menuItem) return;
+
+    // 2. Crear cliente con teléfono
+    const testPhone = '3804998877';
+    const customer = await prisma.customers.create({
+      data: {
+        first_name: 'NanoCliente',
+        last_name: 'TestWA',
+        phone: testPhone,
+      },
+    });
+
+    // 3. Obtener o usar usuario existente para cocinero
+    const cookUser = (await prisma.users.findFirst({ where: { role: 'cook' } })) || (await prisma.users.findFirst());
+    const cookId = cookUser ? cookUser.id : 1;
+    const order = await prisma.orders.create({
+      data: {
+        customer_id: customer.id,
+        table_number: '#99 (Retiro)',
+        status: 'in_progress',
+        assigned_cook_id: cookId,
+        created_by: 1,
+        started_at: new Date(),
+        order_lines: {
+          create: [
+            {
+              menu_item_id: menuItem.id,
+              quantity: 1,
+              unit_price: menuItem.price,
+            },
+          ],
+        },
+      },
+    });
+
+    try {
+      // 4. Completar pedido desde cocina
+      const result = await KitchenService.completeOrder(order.id, cookId);
+
+      // 5. Validar que se marcó como listo y se notificó por WhatsApp
+      assert.strictEqual(result.status, 'ready_to_deliver');
+      assert.strictEqual(result.whatsappNotified, true);
+      assert.strictEqual(result.whatsappPhone, testPhone);
+    } finally {
+      // 6. Limpieza
+      await prisma.order_lines.deleteMany({ where: { order_id: order.id } });
+      await prisma.orders.delete({ where: { id: order.id } });
+      await prisma.customers.delete({ where: { id: customer.id } });
+    }
+  });
 });
