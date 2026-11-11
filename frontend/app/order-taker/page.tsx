@@ -4,11 +4,34 @@ import { useState, useEffect, useCallback, useTransition, useMemo } from 'react'
 import { useRouter } from 'next/navigation';
 import { api, MenuItem, Order, User } from '@/lib/api';
 import { wsClient } from '@/lib/websocket';
+import QRCode from 'qrcode';
 
 interface CartItem {
   menuItem: MenuItem;
   quantity: number;
   notes: string;
+}
+
+export interface CompletedTicketData {
+  orderId: number;
+  turnTag: string;
+  orderMode: 'mostrador' | 'takeaway' | 'delivery';
+  customerName: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
+  items: {
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+    notes?: string;
+  }[];
+  total: number;
+  paymentMethod: string;
+  cashTendered?: number | null;
+  cashChange?: number;
+  createdAt: string;
+  qrCodeUrl?: string;
 }
 
 export default function OrderTakerPOS() {
@@ -23,9 +46,19 @@ export default function OrderTakerPOS() {
   const [selectedCategory, setSelectedCategory] = useState<string>('Sándwich');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-  
+
   // Modal de Carta Completa Original
   const [menuModalOpen, setMenuModalOpen] = useState<boolean>(false);
+
+  // Modal y Estado del Ticket Térmico de Retiro (ESC/POS 80mm)
+  const [lastTicket, setLastTicket] = useState<CompletedTicketData | null>(null);
+  const [ticketModalOpen, setTicketModalOpen] = useState<boolean>(false);
+  const [autoPrint, setAutoPrint] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('nano_autoprint') === 'true';
+    }
+    return false;
+  });
 
   // Datos del Cliente y Turno
   const [customerName, setCustomerName] = useState<string>('');
@@ -130,7 +163,7 @@ export default function OrderTakerPOS() {
     } catch {}
   };
 
-  // Enviar Pedido a Cocina
+  // Enviar Pedido a Cocina y Emitir Ticket Térmico
   const handleCheckout = async (paymentMethod: 'efectivo' | 'qr' | 'tarjeta') => {
     if (cart.length === 0) {
       setFeedback({ text: 'Agregá al menos un lomito o producto al pedido', type: 'error' });
@@ -141,15 +174,34 @@ export default function OrderTakerPOS() {
       setSubmitting(true);
       const nextTurn = turnCounter + 1;
       const turnTag = `#${nextTurn.toString().padStart(2, '0')}`;
+      const changeAmount = cashTendered ? Math.max(0, cashTendered - total) : 0;
 
-      await api.createOrder({
+      // Guardar snapshot de los ítems para el ticket térmico antes de vaciar carrito
+      const ticketItemsSnapshot = cart.map((ci) => ({
+        name: ci.menuItem.name,
+        quantity: ci.quantity,
+        unitPrice: Number(ci.menuItem.price),
+        subtotal: Number(ci.menuItem.price) * ci.quantity,
+        notes: ci.notes?.trim() || undefined,
+      }));
+
+      // Generar código QR para el ticket térmico
+      const trackerUrl = `${typeof window !== 'undefined' ? window.location.origin : 'http://192.168.100.35:4007'}/turnero`;
+      let qrUrl = '';
+      try {
+        qrUrl = await QRCode.toDataURL(trackerUrl, { width: 140, margin: 1 });
+      } catch (err) {
+        console.warn('No se pudo generar QR para ticket:', err);
+      }
+
+      const createdOrder = await api.createOrder({
         customerName: customerName.trim() || 'Cliente Mostrador',
         customerPhone: customerPhone.trim() || undefined,
         deliveryAddress: orderMode === 'delivery' ? deliveryAddress.trim() : undefined,
         orderType: orderMode,
         tableNumber: turnTag,
         paymentMethod: paymentMethod.toUpperCase(),
-        paymentNotes: cashTendered ? `Recibido: $${cashTendered} - Vuelto: $${cashTendered - total}` : undefined,
+        paymentNotes: cashTendered ? `Recibido: $${cashTendered} - Vuelto: $${changeAmount}` : undefined,
         items: cart.map((ci) => ({
           menuItemId: ci.menuItem.id,
           quantity: ci.quantity,
@@ -157,21 +209,49 @@ export default function OrderTakerPOS() {
         })),
       });
 
+      // Crear estructura del ticket
+      const ticketData: CompletedTicketData = {
+        orderId: createdOrder.id,
+        turnTag,
+        orderMode,
+        customerName: customerName.trim() || 'Cliente Mostrador',
+        customerPhone: customerPhone.trim() || undefined,
+        deliveryAddress: orderMode === 'delivery' ? deliveryAddress.trim() : undefined,
+        items: ticketItemsSnapshot,
+        total,
+        paymentMethod: paymentMethod.toUpperCase(),
+        cashTendered: cashTendered,
+        cashChange: changeAmount,
+        createdAt: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        qrCodeUrl: qrUrl,
+      };
+
+      setLastTicket(ticketData);
+      setTicketModalOpen(true);
+
       playChime();
       setTurnCounter(nextTurn);
       if (typeof window !== 'undefined') {
         localStorage.setItem('nano_turn_counter', nextTurn.toString());
       }
 
+      // Limpiar campos del pedido
       setCart([]);
       setCustomerName('');
       setCustomerPhone('');
       setDeliveryAddress('');
       setCashTendered(null);
       setFeedback({
-        text: `✓ Pedido ${turnTag} cobrado con éxito. Enviado a Cocina y Turnero TV.`,
+        text: `✓ Pedido ${turnTag} cobrado con éxito. Ticket generado y enviado a Cocina.`,
         type: 'success',
       });
+
+      // Si está activa la auto-impresión
+      if (autoPrint) {
+        setTimeout(() => {
+          window.print();
+        }, 350);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error al registrar pedido';
       setFeedback({ text: msg, type: 'error' });
@@ -205,12 +285,44 @@ export default function OrderTakerPOS() {
 
   return (
     <div className="min-h-screen bg-[#121214] text-zinc-100 p-3 sm:p-5 font-sans antialiased">
+      {/* Estilos especiales de Impresión Térmica 80mm ESC/POS */}
+      <style jsx global>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          #thermal-receipt,
+          #thermal-receipt * {
+            visibility: visible !important;
+          }
+          #thermal-receipt {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 78mm !important;
+            max-width: 78mm !important;
+            margin: 0 !important;
+            padding: 3mm 4mm !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            font-family: 'Courier New', Courier, monospace !important;
+            box-shadow: none !important;
+            border: none !important;
+            display: block !important;
+          }
+          @page {
+            size: 80mm auto;
+            margin: 0;
+          }
+        }
+      `}</style>
+
       <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
 
         {/* ================= BARRA SUPERIOR CON LOGO OFICIAL ================= */}
         <header className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-zinc-800 gap-4">
           <div className="flex items-center gap-3 sm:gap-4">
-            {/* LOGO OFICIAL NANO LOMOS (DISEÑO AL ESTILO DEL SISTEMA) */}
+            {/* LOGO OFICIAL NANO LOMOS */}
             <div className="bg-black border-2 border-[#FF5A00] rounded-2xl px-4 py-2 shadow-lg shadow-[#FF5A00]/20 flex flex-col items-center justify-center shrink-0">
               <div className="flex items-center gap-1.5 font-black text-xl tracking-widest text-white leading-none">
                 <span>N</span>
@@ -239,8 +351,17 @@ export default function OrderTakerPOS() {
             </div>
           </div>
 
-          {/* Acciones Rápidas (Ver Carta, Turnero TV, Cocina) */}
+          {/* Acciones Rápidas (Último Ticket, Ver Carta, Turnero TV, Cocina) */}
           <div className="flex items-center gap-2 flex-wrap">
+            {lastTicket && (
+              <button
+                onClick={() => setTicketModalOpen(true)}
+                className="px-3.5 py-2 rounded-xl bg-[#FF5A00]/15 hover:bg-[#FF5A00] text-[#FF5A00] hover:text-white border border-[#FF5A00]/40 text-xs font-black transition flex items-center gap-1.5 shadow-sm"
+              >
+                🎫 Ticket {lastTicket.turnTag}
+              </button>
+            )}
+
             <button
               onClick={() => setMenuModalOpen(true)}
               className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-200 border border-zinc-700 transition flex items-center gap-1.5 shadow-sm"
@@ -259,6 +380,12 @@ export default function OrderTakerPOS() {
             >
               🍳 Cocina (KDS)
             </button>
+            <button
+              onClick={() => router.push('/manager')}
+              className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-200 border border-zinc-700 transition flex items-center gap-1.5 shadow-sm"
+            >
+              📊 Gerencia
+            </button>
           </div>
         </header>
 
@@ -272,7 +399,7 @@ export default function OrderTakerPOS() {
             }`}
           >
             <span>{feedback.text}</span>
-            <button onClick={() => setFeedback(null)} className="text-xs opacity-75 hover:opacity-100">✕</button>
+            <button onClick={() => setFeedback(null)} className="text-xs opacity-75 hover:opacity-100 font-bold">✕</button>
           </div>
         )}
 
@@ -336,14 +463,14 @@ export default function OrderTakerPOS() {
                   placeholder="Nombre cliente"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full py-1.5 px-3 rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#FF5A00]"
+                  className="w-full py-1.5 px-3 rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-900 placeholder-zinc-400 focus:outline-hidden focus:ring-1 focus:ring-[#FF5A00]"
                 />
                 <input
                   type="tel"
                   placeholder="Tel. WhatsApp"
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(e.target.value)}
-                  className="w-full py-1.5 px-3 rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#FF5A00]"
+                  className="w-full py-1.5 px-3 rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-900 placeholder-zinc-400 focus:outline-hidden focus:ring-1 focus:ring-[#FF5A00]"
                 />
               </div>
 
@@ -354,7 +481,7 @@ export default function OrderTakerPOS() {
                     placeholder="Dirección de envío (Calle, N°, Barrio)"
                     value={deliveryAddress}
                     onChange={(e) => setDeliveryAddress(e.target.value)}
-                    className="w-full py-1.5 px-3 rounded-lg border border-zinc-200 bg-zinc-50 text-xs text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#FF5A00]"
+                    className="w-full py-1.5 px-3 rounded-lg border border-zinc-200 bg-zinc-50 text-xs text-zinc-900 placeholder-zinc-400 focus:outline-hidden focus:ring-1 focus:ring-[#FF5A00]"
                   />
                 </div>
               )}
@@ -514,9 +641,9 @@ export default function OrderTakerPOS() {
                 <button
                   disabled={submitting || cart.length === 0}
                   onClick={() => handleCheckout('efectivo')}
-                  className="w-full py-4 rounded-full font-black text-sm text-white bg-[#FF5A00] hover:bg-[#e05000] shadow-lg shadow-[#FF5A00]/30 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="w-full py-4 rounded-full font-black text-sm text-white bg-[#FF5A00] hover:bg-[#e05000] shadow-lg shadow-[#FF5A00]/30 transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <span>{submitting ? 'Enviando comanda...' : '✓ Cobrar Efectivo y Enviar a Cocina'}</span>
+                  <span>{submitting ? 'Enviando comanda...' : '✓ Cobrar Efectivo e Imprimir Ticket'}</span>
                 </button>
 
                 <div className="grid grid-cols-2 gap-2">
@@ -535,6 +662,23 @@ export default function OrderTakerPOS() {
                     💳 Débito / Tarjeta
                   </button>
                 </div>
+
+                <div className="pt-1 flex items-center justify-center">
+                  <label className="flex items-center gap-2 text-[11px] text-zinc-500 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoPrint}
+                      onChange={(e) => {
+                        setAutoPrint(e.target.checked);
+                        if (typeof window !== 'undefined') {
+                          localStorage.setItem('nano_autoprint', e.target.checked.toString());
+                        }
+                      }}
+                      className="rounded text-[#FF5A00] focus:ring-[#FF5A00]"
+                    />
+                    <span>Auto-imprimir ticket al cobrar</span>
+                  </label>
+                </div>
               </div>
             </div>
           </section>
@@ -550,16 +694,16 @@ export default function OrderTakerPOS() {
                   placeholder="Buscar lomito, barroluco, hamburguesa o pizza..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full py-2.5 pl-10 pr-4 text-xs rounded-full bg-white text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#FF5A00] shadow-sm font-medium"
+                  className="w-full py-2.5 pl-10 pr-4 text-xs rounded-full bg-white text-zinc-900 placeholder-zinc-400 focus:outline-hidden focus:ring-2 focus:ring-[#FF5A00] shadow-sm font-medium"
                 />
                 <svg
                   className="w-4 h-4 text-[#FF5A00] absolute left-3.5 top-3"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="2.5"
+                  strokeWidth="2.5"
                   viewBox="0 0 24 24"
                 >
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
               </div>
 
@@ -663,7 +807,7 @@ export default function OrderTakerPOS() {
                           </div>
                           <button
                             onClick={() => addToCart(item)}
-                            className="w-9 h-9 rounded-full border-2 border-[#FF5A00] text-[#FF5A00] hover:bg-[#FF5A00] hover:text-white font-black text-xl flex items-center justify-center transition active:scale-95 shadow-sm"
+                            className="w-9 h-9 rounded-full border-2 border-[#FF5A00] text-[#FF5A00] hover:bg-[#FF5A00] hover:text-white font-black text-xl flex items-center justify-center transition active:scale-95 shadow-sm cursor-pointer"
                           >
                             +
                           </button>
@@ -681,7 +825,7 @@ export default function OrderTakerPOS() {
 
         {/* ================= MODAL DE LA CARTA OFICIAL COMPLETA ================= */}
         {menuModalOpen && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-xs z-50 flex items-center justify-center p-4">
             <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
               <div className="flex items-center justify-between p-4 border-b border-zinc-800">
                 <div className="flex items-center gap-2">
@@ -704,6 +848,194 @@ export default function OrderTakerPOS() {
               </div>
               <div className="p-3 border-t border-zinc-800 bg-zinc-900 text-center text-xs text-zinc-400">
                 WhatsApp: 3804 66-1748 • Instagram: @nanolomos • Sabor que se comparte
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= MODAL TICKET TÉRMICO ESC/POS (80mm) ================= */}
+        {ticketModalOpen && lastTicket && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs">
+            <div className="bg-[#18181B] border border-zinc-800 rounded-3xl max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+              {/* Header Modal */}
+              <div className="flex items-center justify-between p-4 border-b border-zinc-800 bg-[#121214]">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-white">Comprobante de Retiro</span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-bold border border-emerald-500/30">
+                    ✓ Cobrado
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="px-3 py-1.5 rounded-xl bg-[#FF5A00] text-white hover:bg-[#e04f00] text-xs font-black flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                  >
+                    <span>🖨️</span>
+                    <span>Imprimir</span>
+                  </button>
+                  <button
+                    onClick={() => setTicketModalOpen(false)}
+                    className="w-7 h-7 rounded-full bg-zinc-800 text-zinc-400 hover:text-white flex items-center justify-center font-bold text-xs"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Contenedor del Ticket Imprimible */}
+              <div className="p-4 overflow-y-auto bg-zinc-950 flex justify-center">
+                <div
+                  id="thermal-receipt"
+                  className="w-[280px] sm:w-[300px] bg-white text-black p-4 rounded shadow font-mono text-[11px] leading-tight select-all border border-zinc-300"
+                >
+                  {/* Header del Ticket */}
+                  <div className="text-center pb-2 border-b border-dashed border-zinc-400">
+                    <div className="font-black text-lg tracking-widest uppercase">N A N O   L O M O S</div>
+                    <div className="text-[10px] font-bold text-zinc-700">Sabor que se comparte</div>
+                    <div className="text-[9px] text-zinc-600 mt-1">Av. San Nicolás 450 • La Rioja</div>
+                    <div className="text-[9px] text-zinc-600">WhatsApp: 3804 66-1748 • @nanolomos</div>
+                  </div>
+
+                  {/* Turno Gigante */}
+                  <div className="text-center py-3 border-b border-dashed border-zinc-400 my-1 bg-zinc-50">
+                    <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-600">
+                      NÚMERO DE RETIRO / TURNO
+                    </span>
+                    <span className="block text-4xl font-black my-0.5 tracking-tighter">
+                      {lastTicket.turnTag}
+                    </span>
+                    <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase bg-black text-white rounded">
+                      {lastTicket.orderMode === 'delivery' ? '🛵 DELIVERY' : '🛍️ RETIRO EN MOSTRADOR'}
+                    </span>
+                  </div>
+
+                  {/* Datos de Comanda y Cliente */}
+                  <div className="py-2 border-b border-dashed border-zinc-400 text-[10px] space-y-0.5">
+                    <div className="flex justify-between">
+                      <span className="font-bold">Comanda: #{lastTicket.orderId}</span>
+                      <span>{lastTicket.createdAt}</span>
+                    </div>
+                    <div>
+                      <span className="font-bold">Cliente: </span>
+                      <span>{lastTicket.customerName}</span>
+                    </div>
+                    {lastTicket.customerPhone && (
+                      <div>
+                        <span className="font-bold">Tel: </span>
+                        <span>{lastTicket.customerPhone}</span>
+                      </div>
+                    )}
+                    {lastTicket.deliveryAddress && (
+                      <div>
+                        <span className="font-bold">Dirección: </span>
+                        <span>{lastTicket.deliveryAddress}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Detalle de Platos */}
+                  <div className="py-2 border-b border-dashed border-zinc-400">
+                    <div className="flex justify-between font-bold text-[10px] border-b border-zinc-300 pb-1 mb-1">
+                      <span>CANT  DESCRIPCIÓN</span>
+                      <span>TOTAL</span>
+                    </div>
+                    <div className="space-y-1">
+                      {lastTicket.items.map((it, idx) => (
+                        <div key={idx}>
+                          <div className="flex justify-between text-[11px]">
+                            <span className="font-bold">
+                              {it.quantity}x {it.name}
+                            </span>
+                            <span className="font-bold">${it.subtotal.toLocaleString('es-AR')}</span>
+                          </div>
+                          {it.notes && (
+                            <div className="text-[9px] text-zinc-600 italic pl-3">
+                              * {it.notes}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Totales y Pago */}
+                  <div className="py-2 border-b border-dashed border-zinc-400 space-y-1 text-[11px]">
+                    <div className="flex justify-between font-black text-sm pt-1">
+                      <span>TOTAL A PAGAR:</span>
+                      <span>${lastTicket.total.toLocaleString('es-AR')}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-zinc-700">
+                      <span>Forma de Pago:</span>
+                      <span className="font-bold uppercase">{lastTicket.paymentMethod}</span>
+                    </div>
+                    {lastTicket.cashTendered && lastTicket.cashTendered > 0 && (
+                      <>
+                        <div className="flex justify-between text-[10px] text-zinc-700">
+                          <span>Paga con:</span>
+                          <span>${lastTicket.cashTendered.toLocaleString('es-AR')}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px] font-bold text-zinc-900 border-t border-zinc-200 pt-0.5">
+                          <span>Su Vuelto:</span>
+                          <span>${(lastTicket.cashChange || 0).toLocaleString('es-AR')}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* QR Code y Turnero */}
+                  <div className="pt-3 pb-1 text-center flex flex-col items-center">
+                    {lastTicket.qrCodeUrl && (
+                      <img
+                        src={lastTicket.qrCodeUrl}
+                        alt="Seguimiento de Turno"
+                        className="w-24 h-24 mx-auto mb-1 border border-zinc-200 p-1 bg-white"
+                      />
+                    )}
+                    <div className="text-[9px] font-bold text-zinc-800">
+                      Seguí tu turno en la pantalla de TV
+                    </div>
+                    <div className="text-[8px] text-zinc-500 mt-1">
+                      ¡Gracias por tu compra! • nanolomos.cals.com.ar
+                    </div>
+                    <div className="text-[8px] text-zinc-400 mt-1">
+                      - - - - - - - - - - - - - - - - - -
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botones de acción modal */}
+              <div className="p-4 border-t border-zinc-800 bg-[#121214] flex items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoPrint}
+                    onChange={(e) => {
+                      setAutoPrint(e.target.checked);
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('nano_autoprint', e.target.checked.toString());
+                      }
+                    }}
+                    className="rounded bg-zinc-800 border-zinc-700 text-[#FF5A00] focus:ring-[#FF5A00]"
+                  />
+                  <span>Auto-imprimir en próximas ventas</span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="px-4 py-2 rounded-xl bg-[#242429] hover:bg-zinc-800 text-white font-bold text-xs border border-zinc-700 transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>🖨️</span>
+                    <span>Imprimir</span>
+                  </button>
+                  <button
+                    onClick={() => setTicketModalOpen(false)}
+                    className="px-4 py-2 rounded-xl bg-[#FF5A00] hover:bg-[#e04f00] text-white font-bold text-xs transition shadow-md shadow-[#FF5A00]/20 cursor-pointer"
+                  >
+                    Nuevo Pedido
+                  </button>
+                </div>
               </div>
             </div>
           </div>
