@@ -16,7 +16,7 @@ export default function Home() {
       } else if (user.role === 'cook') {
         router.replace('/cook');
       } else if (user.role === 'order_taker') {
-        router.replace('/waiter');
+        router.replace('/order-taker');
       } else {
         router.replace('/manager');
       }
