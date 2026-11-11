@@ -70,7 +70,7 @@ export default function CookDashboard() {
       }
     })();
 
-    // Conexión y suscripción a eventos en tiempo real
+    // Conexión WebSocket
     const socket = wsClient.connect();
     if (socket) {
       socket.on('connect', () => setWsConnected(true));
@@ -85,7 +85,7 @@ export default function CookDashboard() {
       loadKitchenData();
     });
 
-    // Auto-refresh de seguridad cada 15 segundos para temporizadores de cocción
+    // Reloj cada 15 segundos para tiempos de espera
     const interval = setInterval(() => {
       setCurrentTime(Date.now());
     }, 15000);
@@ -109,16 +109,6 @@ export default function CookDashboard() {
       await loadKitchenData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error al tomar el pedido';
-      setFeedback(msg);
-    }
-  };
-
-  const handleStartOrder = async (orderId: number) => {
-    try {
-      await api.startKitchenOrder(orderId);
-      await loadKitchenData();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error al iniciar preparación';
       setFeedback(msg);
     }
   };
@@ -148,58 +138,86 @@ export default function CookDashboard() {
     }
   };
 
-  const formatElapsed = (dateStr: string) => {
-    if (!currentTime) return 'recién';
+  const getElapsedTimeInfo = (dateStr?: string | null) => {
+    if (!dateStr || !currentTime) return { text: 'recién', isLate: false, isWarn: false };
     const elapsedMinutes = Math.floor((currentTime - new Date(dateStr).getTime()) / 60000);
-    if (elapsedMinutes < 1) return 'recién';
-    return `hace ${elapsedMinutes}m`;
+    if (elapsedMinutes < 1) return { text: 'recién', isLate: false, isWarn: false };
+    if (elapsedMinutes >= 15) return { text: `${elapsedMinutes}m de demora`, isLate: true, isWarn: true };
+    if (elapsedMinutes >= 10) return { text: `${elapsedMinutes}m`, isLate: false, isWarn: true };
+    return { text: `${elapsedMinutes}m`, isLate: false, isWarn: false };
+  };
+
+  const formatTurnTag = (order: Order) => {
+    if (order.table_number) {
+      const match = order.table_number.match(/#?(\d+)/);
+      if (match) return `#${match[1]}`;
+      return order.table_number;
+    }
+    return `#${order.id % 100 || order.id}`;
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans">
-      {/* Header */}
-      <header className="border-b border-slate-200 bg-white sticky top-0 z-20 px-4 py-3 shadow-xs">
+    <div className="min-h-screen bg-[#121214] text-zinc-100 flex flex-col font-sans select-none">
+      
+      {/* ================= HEADER KDS OFICIAL NANO LOMOS ================= */}
+      <header className="border-b border-zinc-800 bg-[#18181B] sticky top-0 z-20 px-4 py-3 shadow-lg">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img
-              src="/logo-nanolomos.png"
-              alt="Nano Lomos Logo"
-              className="h-10 w-auto object-contain rounded-lg border border-slate-200 bg-slate-900 p-1"
-            />
+          <div className="flex items-center gap-4">
+            {/* Logo Oficial Nano Lomos */}
+            <div className="bg-black border-2 border-[#FF5A00] rounded-xl px-3 py-1.5 shadow-md shadow-[#FF5A00]/20 flex flex-col items-center justify-center">
+              <div className="flex items-center gap-1 font-black text-lg tracking-widest text-white leading-none">
+                <span>N</span>
+                <span className="relative inline-block">
+                  <span>A</span>
+                  <span className="absolute top-[2px] left-[4px] text-[8px] text-[#FF5A00]">▲</span>
+                </span>
+                <span>N</span>
+                <span className="inline-block px-1 bg-[#FF5A00] text-black rounded text-sm font-black">O</span>
+              </div>
+              <span className="text-[7px] font-bold text-[#FF5A00] tracking-[0.25em] uppercase mt-0.5">LOMOS</span>
+            </div>
+
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-black tracking-wider text-slate-900 uppercase">Nano Lomos • Cocina</h1>
+                <h1 className="text-base font-black tracking-wider text-white uppercase">Nano Lomos • Cocina KDS</h1>
                 <span
                   className={`px-2 py-0.5 text-[10px] font-bold rounded-full flex items-center gap-1 ${
                     wsConnected
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-slate-100 text-slate-500 border border-slate-200 animate-pulse'
+                      ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/40'
+                      : 'bg-zinc-800 text-zinc-400 animate-pulse'
                   }`}
-                  title={wsConnected ? 'Conexión WebSocket activa' : 'Reconectando WebSocket...'}
                 >
-                  <span className={`h-1.5 w-1.5 rounded-full ${wsConnected ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                  <span className={`h-1.5 w-1.5 rounded-full ${wsConnected ? 'bg-emerald-400 animate-ping' : 'bg-zinc-400'}`} />
                   {wsConnected ? 'EN VIVO' : 'CONECTANDO'}
                 </span>
               </div>
-              <p className="text-xs text-slate-500">Pantalla de Producción (KDS)</p>
+              <p className="text-xs text-zinc-400">Parrilla, Freidora y Despacho Takeaway</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="text-right hidden sm:block">
-              <p className="text-xs font-semibold text-slate-900">{user?.fullName || user?.username}</p>
-              <p className="text-[11px] text-slate-500 font-medium">Cocinero</p>
-            </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => router.push('/turnero')}
+              className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-200 border border-zinc-700 transition"
+            >
+              📺 Ver Turnero TV
+            </button>
+            <button
+              onClick={() => router.push('/order-taker')}
+              className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-200 border border-zinc-700 transition"
+            >
+              🧾 Mostrador POS
+            </button>
             <button
               onClick={loadKitchenData}
-              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-all text-xs cursor-pointer"
+              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition text-xs"
               title="Refrescar comanda"
             >
               🔄
             </button>
             <button
               onClick={handleLogout}
-              className="px-3.5 py-1.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-xs font-semibold transition-all cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-800/40 text-xs font-bold transition"
             >
               Salir
             </button>
@@ -207,258 +225,259 @@ export default function CookDashboard() {
         </div>
       </header>
 
-      {/* Main Kanban */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col">
-        {feedback && (
-          <div className="mb-4 p-3 rounded-xl bg-white border border-slate-300 text-slate-800 text-xs flex justify-between items-center shadow-xs">
-            <span>{feedback}</span>
-            <button onClick={() => setFeedback(null)} className="underline cursor-pointer">Cerrar</button>
-          </div>
-        )}
+      {/* Banner de Feedback */}
+      {feedback && (
+        <div className="bg-amber-950/80 border-b border-amber-800/60 px-4 py-2 text-xs text-amber-200 flex items-center justify-between">
+          <span>{feedback}</span>
+          <button onClick={() => setFeedback(null)} className="font-bold ml-4">✕</button>
+        </div>
+      )}
 
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Columna 1: En Cola (Pendientes) */}
-          <div className="flex flex-col bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
-            <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
-                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">En Cola</h2>
-              </div>
-              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold">
-                {queueOrders.length}
-              </span>
+      {/* ================= CONTENIDO KDS: 3 COLUMNAS ================= */}
+      <main className="max-w-7xl mx-auto w-full p-4 flex-1 grid grid-cols-1 md:grid-cols-3 gap-5 items-start">
+        
+        {/* ================= COLUMNA 1: COMANDAS EN ESPERA ================= */}
+        <section className="bg-[#1C1C20] rounded-[24px] p-4 border border-zinc-800 flex flex-col min-h-[580px] shadow-xl">
+          <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping" />
+              <h2 className="font-black text-sm text-amber-400 tracking-wider uppercase">En Cola (Nuevas)</h2>
             </div>
+            <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold text-xs">
+              {queueOrders.length}
+            </span>
+          </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3">
-              {loading && queueOrders.length === 0 ? (
-                <div className="text-center py-8 text-xs text-slate-400">Cargando cola...</div>
-              ) : queueOrders.length === 0 ? (
-                <div className="text-center py-12 text-xs text-slate-400">No hay pedidos pendientes en cola</div>
-              ) : (
-                queueOrders.map((order) => (
+          <div className="space-y-3 pt-3 flex-1 overflow-y-auto">
+            {loading ? (
+              <div className="text-center py-16 text-zinc-500 text-xs">Cargando cola...</div>
+            ) : queueOrders.length === 0 ? (
+              <div className="text-center py-16 text-zinc-500 text-xs font-medium">
+                Sin pedidos nuevos por preparar
+              </div>
+            ) : (
+              queueOrders.map((order) => {
+                const timeInfo = getElapsedTimeInfo(order.created_at ? order.created_at.toString() : null);
+                return (
                   <div
                     key={order.id}
-                    className="p-4 rounded-xl bg-slate-50 border border-slate-200 hover:border-slate-300 space-y-3 shadow-xs"
+                    className={`bg-white text-zinc-900 rounded-2xl p-4 shadow-lg space-y-3 border-2 ${
+                      timeInfo.isLate ? 'border-red-500 bg-red-50/20' : 'border-zinc-200'
+                    }`}
                   >
-                    <div className="flex justify-between items-start">
-                      <span className="text-base font-bold text-slate-900">
-                        {order.table_number ? `Mesa ${order.table_number}` : 'Mostrador'}
-                      </span>
-                      <span className="text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 px-2 py-0.5 rounded-full">
-                        {formatElapsed(order.created_at)}
+                    <div className="flex items-start justify-between border-b border-zinc-100 pb-2">
+                      <div>
+                        <span className="text-3xl font-black text-zinc-900 block leading-none">
+                          {formatTurnTag(order)}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 font-bold uppercase mt-1 block">
+                          Takeaway • {timeInfo.text}
+                        </span>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                        timeInfo.isLate ? 'bg-red-500 text-white' : 'bg-zinc-200 text-zinc-700'
+                      }`}>
+                        EN COLA
                       </span>
                     </div>
 
-                    <div className="space-y-1.5 border-t border-b border-slate-200 py-2">
-                      {order.order_lines.map((line) => (
-                        <div key={line.id} className="flex justify-between items-start text-xs">
-                          <div>
-                            <span className="font-bold text-slate-900">{line.quantity}x</span>{' '}
-                            <span className="text-slate-800">{line.menu_items.name}</span>
-                            {line.notes && (
-                              <p className="text-[11px] text-slate-600 italic ml-4">↳ &ldquo;{line.notes}&rdquo;</p>
-                            )}
-                          </div>
-                          {line.menu_items.id && (
+                    {/* Platos de la Comanda */}
+                    <ul className="text-xs space-y-2 py-1">
+                      {order.order_lines?.map((line) => (
+                        <li key={line.id} className="border-b border-zinc-100 pb-1.5 last:border-none">
+                          <div className="flex justify-between items-baseline font-bold text-zinc-900">
+                            <span>
+                              <strong className="text-[#FF5A00] font-black text-sm mr-1">{line.quantity}x</strong>
+                              {line.menu_items?.name}
+                            </span>
                             <button
-                              onClick={() => handleViewRecipe(line.menu_items.id!)}
-                              className="text-[10px] text-slate-500 hover:text-slate-900 underline cursor-pointer"
+                              onClick={() => line.menu_item_id && handleViewRecipe(line.menu_item_id)}
+                              className="text-[10px] text-zinc-400 hover:text-zinc-700"
+                              title="Ver ingredientes"
                             >
-                              Receta
+                              📖 Receta
                             </button>
+                          </div>
+                          {line.notes && (
+                            <div className="mt-1 text-[11px] font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md inline-block">
+                              ⚠️ {line.notes}
+                            </div>
                           )}
-                        </div>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
 
                     <button
                       onClick={() => handleTakeOrder(order.id)}
-                      className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+                      className="w-full py-2.5 rounded-full bg-[#1E1E22] hover:bg-black text-white font-black text-xs shadow-md transition active:scale-95"
                     >
-                      Tomar Pedido
+                      ▶ Tomar en Parrilla
                     </button>
                   </div>
-                ))
-              )}
+                );
+              })
+            )}
+          </div>
+        </section>
+
+        {/* ================= COLUMNA 2: MIS COMANDAS EN PREPARACIÓN ================= */}
+        <section className="bg-[#1C1C20] rounded-[24px] p-4 border-2 border-[#FF5A00] flex flex-col min-h-[580px] shadow-2xl shadow-[#FF5A00]/10">
+          <div className="flex items-center justify-between pb-3 border-b border-[#FF5A00]/40">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#FF5A00] animate-pulse" />
+              <h2 className="font-black text-sm text-[#FF5A00] tracking-wider uppercase">En Parrilla / Cocinando</h2>
             </div>
+            <span className="px-2 py-0.5 rounded-full bg-[#FF5A00] text-white font-black text-xs">
+              {myOrders.length}
+            </span>
           </div>
 
-          {/* Columna 2: En Preparación (Mis Pedidos) */}
-          <div className="flex flex-col bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
-            <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" />
-                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Mis Pedidos (En Curso)</h2>
+          <div className="space-y-3 pt-3 flex-1 overflow-y-auto">
+            {myOrders.length === 0 ? (
+              <div className="text-center py-16 text-zinc-500 text-xs font-medium">
+                No tenés comandas asignadas en preparación
               </div>
-              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold">
-                {myOrders.length}
-              </span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-3">
-              {myOrders.length === 0 ? (
-                <div className="text-center py-12 text-xs text-slate-400">No tienes pedidos tomados en este momento</div>
-              ) : (
-                myOrders.map((order) => {
-                  const isCooking = order.status === 'in_progress';
-                  return (
-                    <div
-                      key={order.id}
-                      className="p-4 rounded-xl bg-slate-50 border border-slate-300 space-y-3 shadow-xs"
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="text-base font-bold text-slate-900">
-                          {order.table_number ? `Mesa ${order.table_number}` : 'Mostrador'}
-                        </span>
-                        <span className="text-[11px] font-semibold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-full">
-                          {isCooking ? 'Cocinando' : 'Tomado'} • {formatElapsed(order.created_at)}
-                        </span>
-                      </div>
-
-                      <div className="space-y-1.5 border-t border-b border-slate-200 py-2">
-                        {order.order_lines.map((line) => (
-                          <div key={line.id} className="flex justify-between items-start text-xs">
-                            <div>
-                              <span className="font-bold text-slate-900">{line.quantity}x</span>{' '}
-                              <span className="text-slate-800">{line.menu_items.name}</span>
-                              {line.notes && (
-                                <p className="text-[11px] text-slate-600 italic ml-4">↳ &ldquo;{line.notes}&rdquo;</p>
-                              )}
-                            </div>
-                            {line.menu_items.id && (
-                              <button
-                                onClick={() => handleViewRecipe(line.menu_items.id!)}
-                                className="text-[10px] text-slate-500 hover:text-slate-900 underline cursor-pointer"
-                              >
-                                Receta
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="flex gap-2">
-                        {!isCooking ? (
-                          <button
-                            onClick={() => handleStartOrder(order.id)}
-                            className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-all cursor-pointer shadow-xs"
-                          >
-                            Empezar Cocción
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleCompleteOrder(order.id)}
-                            className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
-                          >
-                            ✓ Marcar Listo
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          {/* Columna 3: Listos para Entregar */}
-          <div className="flex flex-col bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
-            <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-200">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Listos / Despachados</h2>
-              </div>
-              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold">
-                {readyOrders.length}
-              </span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-3">
-              {readyOrders.length === 0 ? (
-                <div className="text-center py-12 text-xs text-slate-400">No hay pedidos esperando entrega</div>
-              ) : (
-                readyOrders.map((order) => (
+            ) : (
+              myOrders.map((order) => {
+                const timeInfo = getElapsedTimeInfo(order.started_at ? order.started_at.toString() : order.assigned_at ? order.assigned_at.toString() : null);
+                return (
                   <div
                     key={order.id}
-                    className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2 shadow-xs"
+                    className="bg-white text-zinc-900 rounded-2xl p-4 shadow-2xl space-y-3 border-4 border-[#FF5A00]"
                   >
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-slate-900">
-                        {order.table_number ? `Mesa ${order.table_number}` : 'Mostrador'}
-                      </span>
-                      <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                        Listo para el mozo
+                    <div className="flex items-start justify-between border-b border-zinc-100 pb-2">
+                      <div>
+                        <span className="text-4xl font-black text-[#FF5A00] block leading-none">
+                          {formatTurnTag(order)}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 font-bold uppercase mt-1 block">
+                          Cocinando • {timeInfo.text}
+                        </span>
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#FF5A00] text-white text-[10px] font-black uppercase">
+                        PREPARANDO
                       </span>
                     </div>
 
-                    <p className="text-[11px] text-slate-600">
-                      {order.order_lines.map((l) => `${l.quantity}x ${l.menu_items.name}`).join(', ')}
-                    </p>
+                    {/* Platos */}
+                    <ul className="text-xs space-y-2 py-1">
+                      {order.order_lines?.map((line) => (
+                        <li key={line.id} className="border-b border-zinc-100 pb-1.5 last:border-none">
+                          <div className="flex justify-between items-baseline font-bold text-zinc-900">
+                            <span className="text-sm">
+                              <strong className="text-[#FF5A00] font-black text-base mr-1.5">{line.quantity}x</strong>
+                              {line.menu_items?.name}
+                            </span>
+                            <button
+                              onClick={() => line.menu_item_id && handleViewRecipe(line.menu_item_id)}
+                              className="text-[10px] text-zinc-400 hover:text-zinc-700"
+                            >
+                              📖
+                            </button>
+                          </div>
+                          {line.notes && (
+                            <div className="mt-1 text-[11px] font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md inline-block">
+                              ⚠️ {line.notes}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+
+                    {/* BOTÓN GIGANTE LISTO PARA RETIRAR (DISPARA CHIME Y TURNERO) */}
+                    <button
+                      onClick={() => handleCompleteOrder(order.id)}
+                      className="w-full py-3.5 rounded-full bg-[#FF5A00] hover:bg-[#e05000] text-white font-black text-xs shadow-lg shadow-[#FF5A00]/30 transition active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <span>🔔 ¡Listo para Retirar!</span>
+                    </button>
                   </div>
-                ))
-              )}
-            </div>
+                );
+              })
+            )}
           </div>
-        </div>
+        </section>
+
+        {/* ================= COLUMNA 3: RECIÉN COMPLETADAS (LISTAS) ================= */}
+        <section className="bg-[#1C1C20] rounded-[24px] p-4 border border-zinc-800 flex flex-col min-h-[580px] shadow-xl">
+          <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+              <h2 className="font-black text-sm text-emerald-400 tracking-wider uppercase">Listas en Mostrador</h2>
+            </div>
+            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-xs">
+              {readyOrders.length}
+            </span>
+          </div>
+
+          <div className="space-y-3 pt-3 flex-1 overflow-y-auto">
+            {readyOrders.length === 0 ? (
+              <div className="text-center py-16 text-zinc-500 text-xs font-medium">
+                No hay pedidos en espera de retiro
+              </div>
+            ) : (
+              readyOrders.map((order) => (
+                <div
+                  key={order.id}
+                  className="bg-white text-zinc-900 rounded-2xl p-4 shadow-md space-y-2 opacity-90 border border-emerald-500/30"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-3xl font-black text-emerald-600">
+                      {formatTurnTag(order)}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase">
+                      ✓ EN MOSTRADOR
+                    </span>
+                  </div>
+                  <div className="text-xs text-zinc-600 font-medium">
+                    {order.order_lines?.map((l) => `${l.quantity}x ${l.menu_items?.name}`).join(', ')}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
       </main>
 
-      {/* Modal de Receta */}
+      {/* ================= MODAL DE RECETA / INGREDIENTES ================= */}
       {recipeModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-lg p-6 shadow-2xl">
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">
-                  {loadingRecipe ? 'Cargando Receta...' : currentRecipe?.dishName}
-                </h3>
-                <p className="text-xs text-slate-500">Ingredientes y preparación del plato</p>
-              </div>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <h3 className="font-black text-base text-white">Receta e Ingredientes</h3>
               <button
                 onClick={() => setRecipeModalOpen(false)}
-                className="text-slate-400 hover:text-slate-800 text-sm cursor-pointer"
+                className="w-8 h-8 rounded-full bg-zinc-800 text-zinc-400 hover:text-white flex items-center justify-center font-bold"
               >
                 ✕
               </button>
             </div>
 
             {loadingRecipe ? (
-              <div className="py-8 text-center text-xs text-slate-400">Buscando ingredientes...</div>
+              <div className="py-8 text-center text-xs text-zinc-400">Cargando receta...</div>
             ) : currentRecipe ? (
-              <div className="space-y-4">
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">Ingredientes Requeridos</h4>
-                  <ul className="space-y-1.5 text-xs text-slate-800">
-                    {currentRecipe.ingredients.map((ing, idx) => (
-                      <li key={idx} className="flex justify-between border-b border-slate-100 pb-1">
+              <div className="space-y-3">
+                <h4 className="text-sm font-bold text-[#FF5A00]">{currentRecipe.dishName}</h4>
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">Ingredientes a descontar:</span>
+                  <ul className="text-xs space-y-1 text-zinc-200">
+                    {currentRecipe.ingredients?.map((ing, i) => (
+                      <li key={i} className="flex justify-between border-b border-zinc-800 py-1">
                         <span>{ing.name}</span>
-                        <span className="font-semibold text-slate-600">{ing.quantity} {ing.unit}</span>
+                        <span className="font-bold text-[#FF5A00]">{ing.quantity} {ing.unit}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
-
-                {currentRecipe.ingredients.some((i) => i.instructions) && (
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">Instrucciones</h4>
-                    <p className="text-xs text-slate-700 whitespace-pre-wrap bg-slate-50 p-3 rounded-xl border border-slate-200">
-                      {currentRecipe.ingredients.find((i) => i.instructions)?.instructions}
-                    </p>
-                  </div>
-                )}
               </div>
             ) : (
-              <p className="text-xs text-slate-400">No se encontraron detalles de receta para este plato.</p>
+              <div className="py-6 text-center text-xs text-zinc-400">Sin receta registrada para este plato</div>
             )}
-
-            <button
-              onClick={() => setRecipeModalOpen(false)}
-              className="mt-6 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-all cursor-pointer shadow-xs"
-            >
-              Cerrar
-            </button>
           </div>
         </div>
       )}
+
     </div>
   );
 }
