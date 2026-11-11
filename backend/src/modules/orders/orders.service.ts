@@ -24,6 +24,155 @@ export interface CreateOrderDto {
 }
 
 export class OrdersService {
+  /**
+   * Helper unificado para estructurar respuestas de órdenes con paridad Mostrador / Takeaway
+   */
+  static formatOrder(order: any, orderTypeOverride?: string) {
+    const paymentMatch = order.cancel_reason?.match(/\[PAGO:\s*([^\]]+)\]/);
+    const dirMatch = order.cancel_reason?.match(/\[DIR:\s*([^\]]+)\]/);
+
+    const isDelivery = order.table_number?.toUpperCase().startsWith('DELIVERY');
+    const isRetiro = order.table_number?.toUpperCase().startsWith('RETIRO');
+
+    return {
+      ...order,
+      order_type: orderTypeOverride || (isDelivery ? 'delivery' : isRetiro ? 'takeaway' : 'mostrador'),
+      turn_number: order.table_number,
+      payment_method: paymentMatch ? paymentMatch[1] : null,
+      delivery_address: dirMatch ? dirMatch[1] : null,
+      total_amount: Number(order.total_amount),
+      order_lines: order.order_lines ? order.order_lines.map((l: any) => ({
+        ...l,
+        unit_price: Number(l.unit_price),
+      })) : [],
+    };
+  }
+
+  /**
+   * Descuenta stock de ingredientes según recetas para un pedido dado.
+   * Es idempotente: verifica si ya existen registros de consumo para este pedido.
+   */
+  static async deductStockForOrder(orderId: number, userId: number, tx: Prisma.TransactionClient = prisma) {
+    // 1. Evitar doble descuento comprobando transacciones existentes
+    const existing = await tx.stock_transactions.findFirst({
+      where: {
+        reference_id: orderId,
+        reference_type: 'order',
+        transaction_type: 'usage',
+      },
+    });
+
+    if (existing) {
+      logger.info({ orderId }, 'Stock para comanda ya descontado previamente (idempotente).');
+      return;
+    }
+
+    // 2. Obtener comanda con recetas vinculadas
+    const order = await tx.orders.findUnique({
+      where: { id: orderId },
+      include: {
+        order_lines: {
+          include: {
+            menu_items: {
+              include: {
+                recipes: {
+                  include: {
+                    ingredients: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!order) return;
+
+    for (const line of order.order_lines) {
+      for (const recipe of line.menu_items.recipes) {
+        const totalRequired = recipe.quantity_required.mul(line.quantity);
+
+        // Descontar del inventario
+        const updatedIng = await tx.ingredients.update({
+          where: { id: recipe.ingredient_id },
+          data: {
+            current_stock: {
+              decrement: totalRequired,
+            },
+          },
+        });
+
+        // Disparar alerta si el stock cae por debajo del mínimo
+        if (Number(updatedIng.current_stock) < Number(updatedIng.min_stock)) {
+          emitLowStockAlert({
+            id: updatedIng.id,
+            name: updatedIng.name,
+            current_stock: Number(updatedIng.current_stock),
+            min_stock: Number(updatedIng.min_stock),
+          });
+        }
+
+        // Registrar en stock_transactions
+        await tx.stock_transactions.create({
+          data: {
+            ingredient_id: recipe.ingredient_id,
+            transaction_type: 'usage',
+            quantity: totalRequired.negated(),
+            reference_id: orderId,
+            reference_type: 'order',
+            notes: `Consumo comanda #${orderId} (${order.table_number || 'Mostrador'}) - Plato: ${line.menu_items.name} (x${line.quantity})`,
+            created_by: userId,
+          },
+        });
+      }
+    }
+
+    logger.info({ orderId }, 'Stock de ingredientes descontado exitosamente por comanda');
+  }
+
+  /**
+   * Restaura el stock de ingredientes si una comanda con descuento previo es cancelada.
+   */
+  static async restoreStockForOrder(orderId: number, userId: number, tx: Prisma.TransactionClient = prisma) {
+    const usages = await tx.stock_transactions.findMany({
+      where: {
+        reference_id: orderId,
+        reference_type: 'order',
+        transaction_type: 'usage',
+      },
+    });
+
+    if (usages.length === 0) return;
+
+    for (const usage of usages) {
+      const restoreQty = usage.quantity.abs();
+
+      await tx.ingredients.update({
+        where: { id: usage.ingredient_id },
+        data: {
+          current_stock: {
+            increment: restoreQty,
+          },
+        },
+      });
+
+      await tx.stock_transactions.create({
+        data: {
+          ingredient_id: usage.ingredient_id,
+          transaction_type: 'reversal',
+          quantity: restoreQty,
+          reference_id: orderId,
+          reference_type: 'order',
+          notes: `Reversión de consumo por cancelación de comanda #${orderId}`,
+          created_by: userId,
+        },
+      });
+    }
+
+    logger.info({ orderId, itemsCount: usages.length }, 'Stock restaurado tras cancelación de comanda');
+  }
+
   static async createOrder(data: CreateOrderDto) {
     if (!data.items || data.items.length === 0) {
       throw new Error('El pedido debe incluir al menos un plato.');
@@ -75,7 +224,6 @@ export class OrdersService {
         const lastName = nameParts.slice(1).join(' ') || 'Mostrador';
         const phone = data.customerPhone?.trim() || null;
 
-        // Buscar si ya existe por teléfono
         let existingCust = phone
           ? await prisma.customers.findFirst({ where: { phone } })
           : null;
@@ -104,12 +252,14 @@ export class OrdersService {
 
     if (!tableNum) {
       const prefix = data.orderType === 'delivery'
-        ? 'DELIVERY'
+        ? 'DELIV'
         : data.orderType === 'takeaway'
         ? 'RETIRO'
-        : 'MOSTRADOR';
-      const clientTag = data.customerName ? ` (${data.customerName.trim().slice(0, 15)})` : '';
-      tableNum = `${prefix}${clientTag}`;
+        : 'MOST';
+      const clientTag = data.customerName ? `-${data.customerName.trim().slice(0, 14)}` : '';
+      tableNum = `${prefix}${clientTag}`.slice(0, 20);
+    } else {
+      tableNum = tableNum.slice(0, 20);
     }
 
     // Construir metadatos adicionales (dirección de delivery o notas)
@@ -122,14 +272,14 @@ export class OrdersService {
       metaReason = metaReason ? `${metaReason} ${payStr}` : payStr;
     }
 
-    // 4. Crear pedido en transacción
+    // 4. Crear pedido en transacción y descontar stock automáticamente si ya fue cobrado al mostrador
     const order = await prisma.$transaction(async (tx) => {
       const newOrder = await tx.orders.create({
         data: {
           customer_id: customerId || null,
           table_id: data.tableId || null,
           table_number: tableNum,
-          status: data.paymentMethod ? 'pending' : 'pending',
+          status: 'pending',
           cancel_reason: metaReason,
           total_amount: totalAmount,
           created_by: data.createdBy,
@@ -148,19 +298,17 @@ export class OrdersService {
         },
       });
 
+      // Si el pedido cuenta con método de pago informado al mostrador, descontar inventario de inmediato
+      if (data.paymentMethod) {
+        await OrdersService.deductStockForOrder(newOrder.id, data.createdBy, tx);
+      }
+
       return newOrder;
     });
 
     logger.info({ orderId: order.id, total: Number(order.total_amount), type: data.orderType || 'salon' }, 'Pedido creado exitosamente');
 
-    const formattedOrder = {
-      ...order,
-      total_amount: Number(order.total_amount),
-      order_lines: order.order_lines.map((l) => ({
-        ...l,
-        unit_price: Number(l.unit_price),
-      })),
-    };
+    const formattedOrder = OrdersService.formatOrder(order, data.orderType);
 
     // Notificar en tiempo real por WebSocket a Cocina y Gerente
     emitOrderCreated(formattedOrder);
@@ -199,14 +347,7 @@ export class OrdersService {
       },
     });
 
-    return orders.map((o) => ({
-      ...o,
-      total_amount: Number(o.total_amount),
-      order_lines: o.order_lines.map((l) => ({
-        ...l,
-        unit_price: Number(l.unit_price),
-      })),
-    }));
+    return orders.map((o) => OrdersService.formatOrder(o));
   }
 
   static async getOrderById(id: number) {
@@ -233,18 +374,11 @@ export class OrdersService {
       throw new Error('Pedido no encontrado');
     }
 
-    return {
-      ...order,
-      total_amount: Number(order.total_amount),
-      order_lines: order.order_lines.map((l) => ({
-        ...l,
-        unit_price: Number(l.unit_price),
-      })),
-    };
+    return OrdersService.formatOrder(order);
   }
 
   /**
-   * Marcar pedido como entregado (mozo)
+   * Marcar pedido como entregado (mozo o mostrador)
    */
   static async deliverOrder(orderId: number, _userId: number) {
     const order = await prisma.orders.findUnique({ where: { id: orderId } });
@@ -257,27 +391,17 @@ export class OrdersService {
 
     logger.info({ orderId }, 'Pedido marcado como entregado');
     emitOrderStatusChanged(updated);
-    return updated;
+    return OrdersService.formatOrder(updated);
   }
 
   /**
    * Marcar pedido como pagado y cobrar:
-   * Dispara el consumo real de ingredientes según las recetas en una transacción atómica.
+   * Dispara el consumo real de ingredientes según las recetas en una transacción atómica
+   * (con protección de idempotencia si ya se descontó al crear la comanda).
    */
   static async payOrder(orderId: number, userId: number, paymentMethod: string = 'efectivo', notes?: string) {
     const order = await prisma.orders.findUnique({
       where: { id: orderId },
-      include: {
-        order_lines: {
-          include: {
-            menu_items: {
-              include: {
-                recipes: true,
-              },
-            },
-          },
-        },
-      },
     });
 
     if (!order) throw new Error('Pedido no encontrado');
@@ -295,58 +419,21 @@ export class OrdersService {
         },
       });
 
-      // 2. Descontar stock de ingredientes y registrar movimientos
-      for (const line of order.order_lines) {
-        for (const recipe of line.menu_items.recipes) {
-          const totalRequired = recipe.quantity_required.mul(line.quantity);
+      // 2. Descontar stock de ingredientes y registrar movimientos (si no fue descontado previamente)
+      await OrdersService.deductStockForOrder(orderId, userId, tx);
 
-          // Descontar ingrediente
-          const updatedIng = await tx.ingredients.update({
-            where: { id: recipe.ingredient_id },
-            data: {
-              current_stock: {
-                decrement: totalRequired,
-              },
-            },
-          });
-
-          // Alerta si el stock cae por debajo del mínimo
-          if (Number(updatedIng.current_stock) < Number(updatedIng.min_stock)) {
-            emitLowStockAlert({
-              id: updatedIng.id,
-              name: updatedIng.name,
-              current_stock: Number(updatedIng.current_stock),
-              min_stock: Number(updatedIng.min_stock),
-            });
-          }
-
-          // Registrar movimiento en stock_transactions
-          await tx.stock_transactions.create({
-            data: {
-              ingredient_id: recipe.ingredient_id,
-              transaction_type: 'usage',
-              quantity: totalRequired.negated(),
-              reference_id: orderId,
-              reference_type: 'order',
-              notes: `Consumo por comanda #${orderId} - Plato: ${line.menu_items.name} (x${line.quantity})`,
-              created_by: userId,
-            },
-          });
-        }
-      }
-
-      logger.info({ orderId }, 'Pedido cobrado y stock de ingredientes descontado');
+      logger.info({ orderId }, 'Pedido cobrado y stock de ingredientes verificado/descontado');
       return updatedOrder;
     });
 
     emitOrderStatusChanged(result);
-    return result;
+    return OrdersService.formatOrder(result);
   }
 
   /**
-   * Cancelar comanda con motivo
+   * Cancelar comanda con motivo y restaurar stock automáticamente si fue consumido
    */
-  static async cancelOrder(orderId: number, cancelReason: string, _userId: number, userRole: string) {
+  static async cancelOrder(orderId: number, cancelReason: string, userId: number, userRole: string) {
     const order = await prisma.orders.findUnique({ where: { id: orderId } });
     if (!order) throw new Error('Pedido no encontrado');
 
@@ -358,17 +445,22 @@ export class OrdersService {
       throw new Error('El pedido ya está en preparación. Solo el gerente puede cancelarlo.');
     }
 
-    const updated = await prisma.orders.update({
-      where: { id: orderId },
-      data: {
-        status: 'cancelled',
-        cancel_reason: cancelReason,
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      // Revertir consumos de stock si existieron para esta comanda
+      await OrdersService.restoreStockForOrder(orderId, userId, tx);
+
+      return await tx.orders.update({
+        where: { id: orderId },
+        data: {
+          status: 'cancelled',
+          cancel_reason: cancelReason,
+        },
+      });
     });
 
-    logger.info({ orderId, reason: cancelReason }, 'Pedido cancelado');
+    logger.info({ orderId, reason: cancelReason }, 'Pedido cancelado y stock revertido');
     emitOrderStatusChanged(updated);
-    return updated;
+    return OrdersService.formatOrder(updated);
   }
 
   /**
@@ -412,14 +504,7 @@ export class OrdersService {
 
     logger.info({ orderId, cookId, cookName: cook.full_name }, 'Pedido asignado a cocinero');
     emitOrderStatusChanged(updated);
-    return {
-      ...updated,
-      total_amount: Number(updated.total_amount),
-      order_lines: updated.order_lines.map((l) => ({
-        ...l,
-        unit_price: Number(l.unit_price),
-      })),
-    };
+    return OrdersService.formatOrder(updated);
   }
 
   /**
