@@ -17,7 +17,7 @@ import {
 } from '@/lib/api';
 import { wsClient } from '@/lib/websocket';
 
-type TabType = 'resumen' | 'proyeccion' | 'inventario' | 'menu' | 'personal';
+type TabType = 'resumen' | 'inventario' | 'proyeccion' | 'menu' | 'personal';
 
 export default function ManagerDashboard() {
   const router = useRouter();
@@ -27,7 +27,7 @@ export default function ManagerDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('resumen');
   const [wsConnected, setWsConnected] = useState<boolean>(() => !!wsClient.getSocket()?.connected);
 
-  // Datos de estado
+  // Datos del backend
   const [report, setReport] = useState<DailyReport | null>(null);
   const [topItems, setTopItems] = useState<TopSellingItem[]>([]);
   const [projections, setProjections] = useState<PurchaseProjectionItem[]>([]);
@@ -37,15 +37,59 @@ export default function ManagerDashboard() {
   const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
   const [loginHistory, setLoginHistory] = useState<LoginHistoryItem[]>([]);
 
-  // Estado de Arqueo / Cierre de Caja
+  // Arqueo y Caja
   const [shiftSummary, setShiftSummary] = useState<CashShiftSummary | null>(null);
-  const [initialCashInput, setInitialCashInput] = useState<string>('10000');
+  const [initialCashInput, setInitialCashInput] = useState<string>('15000');
   const [loadingShift, setLoadingShift] = useState(false);
 
-  // Estados de carga e interfaz
-  const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  // Filtros y búsquedas
+  const [ingredientSearch, setIngredientSearch] = useState('');
+  const [menuSearch, setMenuSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('todos');
 
+  // Estados de carga y feedback
+  const [loading, setLoading] = useState(true);
+  const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  const [lowStockBanner, setLowStockBanner] = useState<{ name: string; current: number; min: number; unit: string } | null>(null);
+
+  // Modales
+  const [restockModalOpen, setRestockModalOpen] = useState(false);
+  const [selectedIngredient, setSelectedIngredient] = useState<IngredientItem | null>(null);
+  const [restockQty, setRestockQty] = useState('');
+  const [restockNotes, setRestockNotes] = useState('');
+  const [savingRestock, setSavingRestock] = useState(false);
+
+  const [priceModalOpen, setPriceModalOpen] = useState(false);
+  const [selectedMenuItem, setSelectedMenuItem] = useState<MenuItem | null>(null);
+  const [newPrice, setNewPrice] = useState('');
+  const [savingPrice, setSavingPrice] = useState(false);
+
+  const [createUserModalOpen, setCreateUserModalOpen] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [newFullName, setNewFullName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState<'order_taker' | 'waiter' | 'cook' | 'manager'>('order_taker');
+  const [savingUser, setSavingUser] = useState(false);
+
+  const [resetPwdModalOpen, setResetPwdModalOpen] = useState(false);
+  const [selectedStaffUser, setSelectedStaffUser] = useState<StaffUser | null>(null);
+  const [resetPwdInput, setResetPwdInput] = useState('');
+  const [savingResetPwd, setSavingResetPwd] = useState(false);
+
+  // Redirigir si no hay sesión o no es gerente/admin
+  useEffect(() => {
+    const currentUser = api.getUser();
+    if (!currentUser) {
+      startTransition(() => router.replace('/login'));
+      return;
+    }
+    if (currentUser.role !== 'manager' && currentUser.role !== 'admin') {
+      startTransition(() => router.replace('/order-taker'));
+    }
+  }, [router]);
+
+  // Cálculo del Arqueo de Caja
   const handleCalculateShift = useCallback(async (cashValue?: string) => {
     try {
       setLoadingShift(true);
@@ -60,81 +104,29 @@ export default function ManagerDashboard() {
     }
   }, [initialCashInput]);
 
-  // Modal para ingreso de stock (Restock)
-  const [restockModalOpen, setRestockModalOpen] = useState(false);
-  const [selectedIngredient, setSelectedIngredient] = useState<IngredientItem | null>(null);
-  const [restockQty, setRestockQty] = useState('');
-  const [restockNotes, setRestockNotes] = useState('');
-  const [savingRestock, setSavingRestock] = useState(false);
-
-  // Modal para actualizar precio de plato
-  const [priceModalOpen, setPriceModalOpen] = useState(false);
-  const [selectedMenuItem, setSelectedMenuItem] = useState<MenuItem | null>(null);
-  const [newPrice, setNewPrice] = useState('');
-  const [savingPrice, setSavingPrice] = useState(false);
-
-  // Modal para crear nuevo empleado
-  const [createUserModalOpen, setCreateUserModalOpen] = useState(false);
-  const [newUsername, setNewUsername] = useState('');
-  const [newFullName, setNewFullName] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [newRole, setNewRole] = useState<'order_taker' | 'waiter' | 'cook' | 'manager'>('order_taker');
-  const [savingUser, setSavingUser] = useState(false);
-
-  // Modal para resetear contraseña
-  const [resetPwdModalOpen, setResetPwdModalOpen] = useState(false);
-  const [selectedStaffUser, setSelectedStaffUser] = useState<StaffUser | null>(null);
-  const [resetPwdInput, setResetPwdInput] = useState('');
-  const [savingResetPwd, setSavingResetPwd] = useState(false);
-
-  // Modal para editar rol y privilegios de empleado
-  const [editRoleModalOpen, setEditRoleModalOpen] = useState(false);
-  const [editUserRole, setEditUserRole] = useState<string>('waiter');
-  const [savingEditRole, setSavingEditRole] = useState(false);
-  const [loadingStaff, setLoadingStaff] = useState(false);
-
-  // Carga manual o reactiva de lista de empleados
-  const loadStaff = useCallback(async () => {
-    try {
-      setLoadingStaff(true);
-      const staff = await api.getUsers(true);
-      setStaffUsers(Array.isArray(staff) ? staff : []);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error al cargar lista de empleados';
-      setFeedback({ text: msg, type: 'error' });
-    } finally {
-      setLoadingStaff(false);
-    }
-  }, []);
-
-  // Redirigir si no hay sesión o no es gerente/admin
-  useEffect(() => {
-    const currentUser = api.getUser();
-    if (!currentUser) {
-      startTransition(() => router.replace('/login'));
-      return;
-    }
-    if (currentUser.role !== 'manager' && currentUser.role !== 'admin') {
-      startTransition(() => router.replace('/waiter'));
-    }
-  }, [router]);
-
-  // Carga general de datos según pestaña
+  // Carga general de datos
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [fetchedReport, fetchedTop, fetchedProj, fetchedInv, fetchedTrans, fetchedMenu, fetchedStaff, fetchedHistory] =
-        await Promise.all([
-          api.getDailyReport().catch(() => null),
-          api.getTopSellingItems(6).catch(() => []),
-          api.getPurchaseProjection().catch(() => []),
-          api.getInventory().catch(() => []),
-          api.getStockTransactions(20).catch(() => []),
-          api.getMenu(undefined, true).catch(() => []),
-          api.getUsers(true).catch(() => []),
-          api.getLoginHistory(undefined, 25).catch(() => []),
-        ]);
+      const [
+        fetchedReport,
+        fetchedTop,
+        fetchedProj,
+        fetchedInv,
+        fetchedTrans,
+        fetchedMenu,
+        fetchedStaff,
+        fetchedHistory,
+      ] = await Promise.all([
+        api.getDailyReport().catch(() => null),
+        api.getTopSellingItems(8).catch(() => []),
+        api.getPurchaseProjection().catch(() => []),
+        api.getInventory().catch(() => []),
+        api.getStockTransactions(30).catch(() => []),
+        api.getMenu(undefined, true).catch(() => []),
+        api.getUsers(true).catch(() => []),
+        api.getLoginHistory(undefined, 25).catch(() => []),
+      ]);
 
       setReport(fetchedReport);
       setTopItems(fetchedTop);
@@ -145,7 +137,6 @@ export default function ManagerDashboard() {
       setStaffUsers(fetchedStaff);
       setLoginHistory(fetchedHistory);
 
-      // Cargar arqueo inicial
       const val = parseFloat(initialCashInput) || 0;
       api.getCashShiftSummary(val).then((s) => setShiftSummary(s)).catch(() => {});
     } catch (err: unknown) {
@@ -157,46 +148,18 @@ export default function ManagerDashboard() {
   }, [initialCashInput]);
 
   useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const [fetchedReport, fetchedTop, fetchedProj, fetchedInv, fetchedTrans, fetchedMenu, fetchedStaff, fetchedHistory] =
-          await Promise.all([
-            api.getDailyReport().catch(() => null),
-            api.getTopSellingItems(6).catch(() => []),
-            api.getPurchaseProjection().catch(() => []),
-            api.getInventory().catch(() => []),
-            api.getStockTransactions(20).catch(() => []),
-            api.getMenu(undefined, true).catch(() => []),
-            api.getUsers(true).catch(() => []),
-            api.getLoginHistory(undefined, 25).catch(() => []),
-          ]);
-        if (!active) return;
-        setReport(fetchedReport);
-        setTopItems(fetchedTop);
-        setProjections(fetchedProj);
-        setInventory(fetchedInv);
-        setTransactions(fetchedTrans);
-        setMenuItems(fetchedMenu);
-        setStaffUsers(fetchedStaff);
-        setLoginHistory(fetchedHistory);
-        const shift = await api.getCashShiftSummary(10000).catch(() => null);
-        if (!active) return;
-        if (shift) setShiftSummary(shift);
-      } catch (err: unknown) {
-        if (!active) return;
-        const msg = err instanceof Error ? err.message : 'Error al cargar datos del panel';
-        setFeedback({ text: msg, type: 'error' });
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
+    loadData();
 
-    // Conexión y suscripciones WebSocket en tiempo real para gerentes
+    // Conexión y oyentes WebSocket en tiempo real
     const socket = wsClient.connect();
     if (socket) {
-      socket.on('connect', () => setWsConnected(true));
-      socket.on('disconnect', () => setWsConnected(false));
+      setWsConnected(socket.connected);
+
+      const onConnect = () => setWsConnected(true);
+      const onDisconnect = () => setWsConnected(false);
+
+      socket.on('connect', onConnect);
+      socket.on('disconnect', onDisconnect);
     }
 
     const unsubCreated = wsClient.on('order:created', () => {
@@ -207,21 +170,24 @@ export default function ManagerDashboard() {
       loadData();
     });
 
-    const unsubStock = wsClient.on('stock:low_alert', (data: unknown) => {
+    const unsubStock = wsClient.on('stock:low_alert', (data: any) => {
+      setLowStockBanner({
+        name: data?.name || 'Insumo',
+        current: Number(data?.current_stock || 0),
+        min: Number(data?.min_stock || 0),
+        unit: data?.unit || 'u',
+      });
       loadData();
-      const alertData = data as { name?: string; current_stock?: number; min_stock?: number } | null;
-      if (alertData?.name) {
-        setFeedback({
-          text: `⚠️ Alerta de stock crítico: ${alertData.name} tiene solo ${alertData.current_stock} unidades (mínimo ${alertData.min_stock})`,
-          type: 'error',
-        });
-      }
     });
 
     const interval = setInterval(loadData, 30000);
+
     return () => {
-      active = false;
       clearInterval(interval);
+      if (socket) {
+        socket.off('connect');
+        socket.off('disconnect');
+      }
       unsubCreated();
       unsubStatus();
       unsubStock();
@@ -233,6 +199,7 @@ export default function ManagerDashboard() {
     startTransition(() => router.replace('/login'));
   };
 
+  // Acciones de Reposición (Restock)
   const handleOpenRestock = (item: IngredientItem | PurchaseProjectionItem) => {
     const fullItem = inventory.find((i) => i.id === item.id) || {
       id: item.id,
@@ -276,6 +243,7 @@ export default function ManagerDashboard() {
     }
   };
 
+  // Acciones de Precios
   const handleOpenEditPrice = (item: MenuItem) => {
     setSelectedMenuItem(item);
     setNewPrice(item.price.toString());
@@ -292,7 +260,7 @@ export default function ManagerDashboard() {
       setSavingPrice(true);
       await api.updateMenuItem(selectedMenuItem.id, { price: Number(newPrice) });
       setFeedback({
-        text: `Precio de "${selectedMenuItem.name}" actualizado a \$${Number(newPrice).toLocaleString('es-AR')}`,
+        text: `Precio de "${selectedMenuItem.name}" actualizado a $${Number(newPrice).toLocaleString('es-AR')}`,
         type: 'success',
       });
       setPriceModalOpen(false);
@@ -305,24 +273,10 @@ export default function ManagerDashboard() {
     }
   };
 
-  const handleToggleItemStatus = async (item: MenuItem) => {
-    try {
-      const newStatus = !item.is_active;
-      await api.updateMenuItem(item.id, { is_active: newStatus });
-      setFeedback({
-        text: `Plato "${item.name}" ${newStatus ? 'activado' : 'pausado'} en el menú`,
-        type: 'success',
-      });
-      loadData();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error al cambiar estado del plato';
-      setFeedback({ text: msg, type: 'error' });
-    }
-  };
-
-  const handleCreateUser = async () => {
-    if (!newUsername || !newPassword || !newFullName) {
-      setFeedback({ text: 'Usuario, nombre completo y contraseña son requeridos', type: 'error' });
+  // Acciones de Empleados
+  const handleConfirmCreateUser = async () => {
+    if (!newUsername || !newFullName || !newPassword) {
+      setFeedback({ text: 'Nombre de usuario, nombre completo y contraseña son obligatorios', type: 'error' });
       return;
     }
 
@@ -335,10 +289,7 @@ export default function ManagerDashboard() {
         password: newPassword,
         role: newRole,
       });
-      setFeedback({
-        text: `Empleado "${newFullName}" creado exitosamente con rol ${newRole}`,
-        type: 'success',
-      });
+      setFeedback({ text: `Empleado "${newFullName}" creado exitosamente`, type: 'success' });
       setCreateUserModalOpen(false);
       setNewUsername('');
       setNewFullName('');
@@ -346,14 +297,20 @@ export default function ManagerDashboard() {
       setNewPassword('');
       loadData();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error al crear empleado';
+      const msg = err instanceof Error ? err.message : 'Error al dar de alta empleado';
       setFeedback({ text: msg, type: 'error' });
     } finally {
       setSavingUser(false);
     }
   };
 
-  const handleResetPassword = async () => {
+  const handleOpenResetPwd = (staff: StaffUser) => {
+    setSelectedStaffUser(staff);
+    setResetPwdInput('');
+    setResetPwdModalOpen(true);
+  };
+
+  const handleConfirmResetPwd = async () => {
     if (!selectedStaffUser || !resetPwdInput || resetPwdInput.length < 6) {
       setFeedback({ text: 'La nueva contraseña debe tener al menos 6 caracteres', type: 'error' });
       return;
@@ -362,1047 +319,863 @@ export default function ManagerDashboard() {
     try {
       setSavingResetPwd(true);
       await api.resetUserPassword(selectedStaffUser.id, resetPwdInput);
-      setFeedback({
-        text: `Contraseña de "${selectedStaffUser.full_name}" restablecida con éxito`,
-        type: 'success',
-      });
+      setFeedback({ text: `Contraseña de ${selectedStaffUser.full_name} actualizada con éxito`, type: 'success' });
       setResetPwdModalOpen(false);
-      setResetPwdInput('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error al restablecer contraseña';
+      const msg = err instanceof Error ? err.message : 'Error al resetear contraseña';
       setFeedback({ text: msg, type: 'error' });
     } finally {
       setSavingResetPwd(false);
     }
   };
 
-  const handleToggleUserStatus = async (staff: StaffUser) => {
-    try {
-      await api.toggleUserStatus(staff.id);
-      setFeedback({
-        text: `Estado de "${staff.full_name}" actualizado a ${!staff.is_active ? 'Activo' : 'Suspendido'}`,
-        type: 'success',
-      });
-      loadData();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error al cambiar estado de empleado';
-      setFeedback({ text: msg, type: 'error' });
-    }
-  };
+  // Categorías del Menú
+  const categories = ['todos', ...Array.from(new Set(menuItems.map((m) => m.category || 'Otros')))];
+  const filteredMenuItems = menuItems.filter((item) => {
+    const matchCat = selectedCategory === 'todos' || (item.category || 'Otros') === selectedCategory;
+    const matchText = item.name.toLowerCase().includes(menuSearch.toLowerCase());
+    return matchCat && matchText;
+  });
 
-  const handleUpdateRole = async () => {
-    if (!selectedStaffUser) return;
-    try {
-      setSavingEditRole(true);
-      await api.updateUser(selectedStaffUser.id, { role: editUserRole });
-      setFeedback({
-        text: `Rol de "${selectedStaffUser.full_name}" actualizado a ${editUserRole.toUpperCase()} con éxito.`,
-        type: 'success',
-      });
-      setEditRoleModalOpen(false);
-      loadData();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error al actualizar rol de empleado';
-      setFeedback({ text: msg, type: 'error' });
-    } finally {
-      setSavingEditRole(false);
-    }
-  };
+  const filteredInventory = inventory.filter((ing) =>
+    ing.name.toLowerCase().includes(ingredientSearch.toLowerCase())
+  );
+
+  const lowStockCount = inventory.filter((i) => i.is_low_stock).length;
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans">
-      {/* Header Corporativo NANO LOMOS */}
-      <header className="border-b border-slate-200 bg-white sticky top-0 z-40 px-4 py-3 sm:px-6 shadow-xs">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <img
-              src="/logo-nanolomos.png"
-              alt="Nano Lomos Logo"
-              className="h-10 w-auto object-contain rounded-lg border border-slate-200 bg-slate-900 p-1"
-            />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-black tracking-wider text-slate-900 text-base uppercase">NANO LOMOS</span>
-                <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                  Panel Gerencial
-                </span>
-                <span
-                  className={`px-2 py-0.5 text-[10px] font-black rounded-full flex items-center gap-1 ${
-                    wsConnected
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-slate-100 text-slate-500 border border-slate-200 animate-pulse'
-                  }`}
-                  title={wsConnected ? 'Conexión WebSocket activa' : 'Reconectando WebSocket...'}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${wsConnected ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                  {wsConnected ? 'EN VIVO' : 'CONECTANDO'}
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 font-medium">Control operativo, compras y stock en tiempo real</p>
-            </div>
+    <div className="min-h-screen bg-[#121214] text-[#EDEDED] flex flex-col font-sans selection:bg-[#FF5A00] selection:text-white">
+      {/* Alerta flotante de Stock Crítico vía WebSocket */}
+      {lowStockBanner && (
+        <div className="bg-red-500/15 border-b border-red-500/40 text-red-200 px-4 py-2.5 flex items-center justify-between text-xs sm:text-sm animate-pulse">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🚨</span>
+            <span>
+              <strong>¡Stock Crítico en Cocina!</strong> El insumo{' '}
+              <strong className="text-white underline">{lowStockBanner.name}</strong> bajó a{' '}
+              <span className="font-bold text-red-300">
+                {lowStockBanner.current} {lowStockBanner.unit}
+              </span>{' '}
+              (Mínimo de seguridad: {lowStockBanner.min} {lowStockBanner.unit}).
+            </span>
           </div>
-
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex flex-col text-right">
-              <span suppressHydrationWarning className="text-xs font-bold text-slate-900">{user?.fullName || 'Gerente'}</span>
-              <span suppressHydrationWarning className="text-[11px] text-slate-500 capitalize font-medium">{user?.role || 'Manager'}</span>
-            </div>
-            <button
-              onClick={loadData}
-              disabled={loading}
-              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
-              title="Actualizar datos"
-            >
-              🔄
-            </button>
-            <button
-              onClick={() => router.push('/order-taker')}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
-              title="Ir a pantalla de Cajero Mostrador"
-            >
-              <span>🛍️</span> Mostrador
-            </button>
-            <button
-              onClick={handleLogout}
-              className="px-3.5 py-1.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              Cerrar Sesión
-            </button>
-          </div>
-        </div>
-
-        {/* Pestañas de navegación */}
-        <div className="max-w-7xl mx-auto mt-4 flex items-center gap-2 overflow-x-auto border-t border-slate-200 pt-3">
           <button
-            onClick={() => setActiveTab('resumen')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
-              activeTab === 'resumen'
-                ? 'bg-slate-800 text-white shadow-xs'
-                : 'bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-900 border border-slate-200'
-            }`}
+            onClick={() => setLowStockBanner(null)}
+            className="text-red-300 hover:text-white text-xs font-bold px-2 py-0.5 rounded bg-red-950/40"
           >
-            📊 Ventas y Operación
-          </button>
-          <button
-            onClick={() => setActiveTab('proyeccion')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
-              activeTab === 'proyeccion'
-                ? 'bg-slate-800 text-white shadow-xs'
-                : 'bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-900 border border-slate-200'
-            }`}
-          >
-            🛒 Proyección de Compras
-          </button>
-          <button
-            onClick={() => setActiveTab('inventario')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
-              activeTab === 'inventario'
-                ? 'bg-slate-800 text-white shadow-xs'
-                : 'bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-900 border border-slate-200'
-            }`}
-          >
-            📦 Inventario y Stock
-          </button>
-          <button
-            onClick={() => setActiveTab('menu')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
-              activeTab === 'menu'
-                ? 'bg-slate-800 text-white shadow-xs'
-                : 'bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-900 border border-slate-200'
-            }`}
-          >
-            🍔 Menú y Precios
-          </button>
-          <button
-            onClick={() => setActiveTab('personal')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
-              activeTab === 'personal'
-                ? 'bg-slate-800 text-white shadow-xs'
-                : 'bg-slate-50 text-slate-600 hover:bg-slate-200 hover:text-slate-900 border border-slate-200'
-            }`}
-          >
-            👥 Personal y Equipo
-          </button>
-        </div>
-      </header>
-
-      {/* Banner de Feedback */}
-      {feedback && (
-        <div
-          className={`px-4 py-3 text-center text-sm font-semibold flex items-center justify-center gap-3 ${
-            feedback.type === 'success'
-              ? 'bg-emerald-950/80 text-emerald-300 border-b border-emerald-800'
-              : 'bg-rose-950/80 text-rose-300 border-b border-rose-800'
-          }`}
-        >
-          <span>{feedback.text}</span>
-          <button
-            onClick={() => setFeedback(null)}
-            className="text-xs opacity-70 hover:opacity-100"
-          >
-            ✕
+            Cerrar ✕
           </button>
         </div>
       )}
 
-      {/* Contenido Principal */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
-        {loading && !report ? (
-          <div className="flex flex-col items-center justify-center py-24 text-slate-400">
-            <div className="h-10 w-10 border-4 border-amber-500/20 border-t-amber-500 rounded-full animate-spin mb-4" />
-            <p className="text-sm">Sincronizando información de NANO LOMOS...</p>
+      {/* Header Corporativo NANO LOMOS */}
+      <header className="border-b border-[#242429] bg-[#18181B] sticky top-0 z-40 px-4 py-3 sm:px-6 shadow-md">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            {/* Logo Vector Oficial NANO LOMOS */}
+            <div className="bg-[#121214] border border-[#FF5A00]/50 rounded-xl px-3 py-1 flex items-center gap-2 shadow-xs">
+              <span className="text-white font-black tracking-widest text-base">
+                N<span className="text-[#FF5A00]">▲</span>N<span className="text-[#FF5A00]">■</span>
+              </span>
+              <span className="text-[#FF5A00] text-xs font-black tracking-widest">— LOMOS —</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 text-xs font-black rounded-full bg-[#FF5A00]/15 text-[#FF5A00] border border-[#FF5A00]/30 tracking-wider uppercase">
+                Panel Gerencial Takeaway
+              </span>
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-400">
+                <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                {wsConnected ? 'En vivo' : 'Offline'}
+              </div>
+            </div>
           </div>
-        ) : (
-          <>
-            {/* ================= PESTAÑA: RESUMEN DE VENTAS Y OPERACIÓN ================= */}
-            {activeTab === 'resumen' && (
-              <div className="space-y-6">
-                {/* Métricas Principales */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="p-4 rounded-xl bg-white border border-[#e8e3d9] shadow-xs">
-                    <span className="text-xs font-semibold text-stone-500 block mb-1">Recaudación de Hoy</span>
-                    <div className="text-2xl sm:text-3xl font-serif font-black text-stone-900">
-                      ${report?.total_revenue?.toLocaleString('es-AR') || '0'}
-                    </div>
-                    <span className="text-[11px] text-stone-500 mt-1 block">
-                      {report?.paid_orders || 0} pedidos cobrados
-                    </span>
-                  </div>
 
-                  <div className="p-4 rounded-xl bg-white border border-[#e8e3d9] shadow-xs">
-                    <span className="text-xs font-semibold text-stone-500 block mb-1">Total Comandas</span>
-                    <div className="text-2xl sm:text-3xl font-serif font-black text-stone-900">
-                      {report?.total_orders || 0}
-                    </div>
-                    <span className="text-[11px] text-stone-500 mt-1 block">
-                      {report?.in_progress_orders || 0} en preparación
-                    </span>
-                  </div>
+          {/* Acciones de usuario y accesos rápidos */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              onClick={() => router.push('/order-taker')}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-[#242429] text-zinc-300 hover:text-white hover:bg-zinc-800 border border-zinc-700/60 transition"
+            >
+              🛒 POS Mostrador
+            </button>
+            <button
+              onClick={() => router.push('/turnero')}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-[#242429] text-zinc-300 hover:text-white hover:bg-zinc-800 border border-zinc-700/60 transition"
+            >
+              📺 Turnero TV
+            </button>
+            <button
+              onClick={() => router.push('/cook')}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-[#242429] text-zinc-300 hover:text-white hover:bg-zinc-800 border border-zinc-700/60 transition"
+            >
+              👨‍🍳 Cocina KDS
+            </button>
 
-                  <div className="p-4 rounded-xl bg-white border border-[#e8e3d9] shadow-xs">
-                    <span className="text-xs font-semibold text-stone-500 block mb-1">Tiempo Prom. Cocina</span>
-                    <div className="text-2xl sm:text-3xl font-serif font-black text-stone-800">
-                      {report?.avg_completion_time_minutes || 0} min
-                    </div>
-                    <span className="text-[11px] text-stone-500 mt-1 block">Desde ingreso hasta despacho</span>
-                  </div>
+            <div className="h-6 w-px bg-zinc-800 mx-1 hidden sm:block" />
 
-                  <div className="p-4 rounded-xl bg-white border border-[#e8e3d9] shadow-xs">
-                    <span className="text-xs font-semibold text-stone-500 block mb-1">Pedidos Demorados (&gt;20m)</span>
-                    <div
-                      className={`text-2xl sm:text-3xl font-serif font-black ${
-                        (report?.delayed_orders_count || 0) > 0 ? 'text-rose-700' : 'text-stone-700'
-                      }`}
-                    >
-                      {report?.delayed_orders_count || 0}
-                    </div>
-                    <span className="text-[11px] text-stone-500 mt-1 block">Requieren atención en cocina</span>
-                  </div>
+            <div className="flex items-center gap-2 pl-2 border-l border-zinc-800">
+              <span className="text-xs font-bold text-zinc-300 hidden md:inline">
+                {user?.fullName || user?.username}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30 transition"
+                title="Cerrar sesión"
+              >
+                Salir
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Navegación por Pestañas */}
+      <nav className="bg-[#18181B] border-b border-[#242429] px-4 sm:px-6">
+        <div className="max-w-7xl mx-auto flex items-center gap-2 overflow-x-auto py-2.5 no-scrollbar">
+          <button
+            onClick={() => setActiveTab('resumen')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'resumen'
+                ? 'bg-[#FF5A00] text-white shadow-md shadow-[#FF5A00]/20'
+                : 'text-zinc-400 hover:text-white hover:bg-[#242429]'
+            }`}
+          >
+            <span>📊</span>
+            <span>Resumen & Arqueo de Caja</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('inventario')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'inventario'
+                ? 'bg-[#FF5A00] text-white shadow-md shadow-[#FF5A00]/20'
+                : 'text-zinc-400 hover:text-white hover:bg-[#242429]'
+            }`}
+          >
+            <span>🥩</span>
+            <span>Insumos & Stock en Vivo</span>
+            {lowStockCount > 0 && (
+              <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                {lowStockCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('proyeccion')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'proyeccion'
+                ? 'bg-[#FF5A00] text-white shadow-md shadow-[#FF5A00]/20'
+                : 'text-zinc-400 hover:text-white hover:bg-[#242429]'
+            }`}
+          >
+            <span>🛒</span>
+            <span>Proyección de Compras</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('menu')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'menu'
+                ? 'bg-[#FF5A00] text-white shadow-md shadow-[#FF5A00]/20'
+                : 'text-zinc-400 hover:text-white hover:bg-[#242429]'
+            }`}
+          >
+            <span>🍔</span>
+            <span>Carta Oficial & Precios ({menuItems.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('personal')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'personal'
+                ? 'bg-[#FF5A00] text-white shadow-md shadow-[#FF5A00]/20'
+                : 'text-zinc-400 hover:text-white hover:bg-[#242429]'
+            }`}
+          >
+            <span>👥</span>
+            <span>Personal & Auditoría</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* Contenido Principal */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+        {feedback && (
+          <div
+            className={`p-3.5 rounded-xl border text-sm font-semibold flex items-center justify-between ${
+              feedback.type === 'success'
+                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                : feedback.type === 'warning'
+                ? 'bg-amber-950/40 border-amber-500/40 text-amber-300'
+                : 'bg-red-950/40 border-red-500/40 text-red-300'
+            }`}
+          >
+            <span>{feedback.text}</span>
+            <button onClick={() => setFeedback(null)} className="text-xs opacity-70 hover:opacity-100 font-bold">
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* PESTAÑA 1: RESUMEN Y ARQUEO DE CAJA EXPRESS                   */}
+        {/* ============================================================== */}
+        {activeTab === 'resumen' && (
+          <div className="space-y-6">
+            {/* Tarjetas Métricas Principales */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-5 shadow-sm">
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Recaudación Total Hoy</span>
+                <div className="mt-2 text-3xl font-black text-white">
+                  ${Number(report?.total_revenue || 0).toLocaleString('es-AR')}
                 </div>
-
-                {/* Gráficos / Tableros de Estado y Ranking */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Desglose de Estado de Comandas */}
-                  <div className="p-5 rounded-xl bg-white border border-[#e8e3d9] shadow-xs">
-                    <h3 className="font-serif font-bold text-stone-900 text-base mb-4 flex items-center gap-2">
-                      <span>⏱️ Estado de Comandas Hoy</span>
-                    </h3>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#faf8f5] border border-[#e8e3d9]">
-                        <div className="flex items-center gap-2">
-                          <span className="h-3 w-3 rounded-full bg-stone-400" />
-                          <span className="text-sm font-medium text-stone-700">Pendientes en Cocina</span>
-                        </div>
-                        <span className="font-black text-stone-900">{report?.pending_orders || 0}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#faf8f5] border border-[#e8e3d9]">
-                        <div className="flex items-center gap-2">
-                          <span className="h-3 w-3 rounded-full bg-amber-600" />
-                          <span className="text-sm font-medium text-stone-700">En Preparación / Fuego</span>
-                        </div>
-                        <span className="font-black text-stone-900">{report?.in_progress_orders || 0}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#faf8f5] border border-[#e8e3d9]">
-                        <div className="flex items-center gap-2">
-                          <span className="h-3 w-3 rounded-full bg-[#1e3a2f]" />
-                          <span className="text-sm font-medium text-stone-700">Listas para Entregar</span>
-                        </div>
-                        <span className="font-black text-stone-900">{report?.ready_orders || 0}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#faf8f5] border border-[#e8e3d9]">
-                        <div className="flex items-center gap-2">
-                          <span className="h-3 w-3 rounded-full bg-slate-600" />
-                          <span className="text-sm font-medium text-stone-700">Entregadas a la Mesa</span>
-                        </div>
-                        <span className="font-black text-stone-900">{report?.delivered_orders || 0}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#faf8f5] border border-[#e8e3d9]">
-                        <div className="flex items-center gap-2">
-                          <span className="h-3 w-3 rounded-full bg-stone-500" />
-                          <span className="text-sm font-medium text-stone-700">Cobradas / Finalizadas</span>
-                        </div>
-                        <span className="font-black text-[#1e3a2f]">{report?.paid_orders || 0}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Ranking de Platos Más Vendidos */}
-                  <div className="p-5 rounded-xl bg-white border border-[#e8e3d9] shadow-xs">
-                    <h3 className="font-serif font-bold text-stone-900 text-base mb-4 flex items-center gap-2">
-                      <span>🏆 Platos Más Vendidos (Hoy)</span>
-                    </h3>
-                    {topItems.length === 0 ? (
-                      <p className="text-sm text-stone-500 italic py-8 text-center">
-                        Aún no se registraron ventas en la jornada de hoy.
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {topItems.map((item, idx) => (
-                          <div
-                            key={item.id}
-                            className="flex items-center justify-between p-3 rounded-xl bg-[#faf8f5] border border-[#e8e3d9]"
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="h-6 w-6 rounded-full bg-[#f2ece2] text-stone-700 border border-[#e8e3d9] flex items-center justify-center text-xs font-bold">
-                                #{idx + 1}
-                              </span>
-                              <div>
-                                <h4 className="text-sm font-bold text-stone-900">{item.name}</h4>
-                                <span className="text-[11px] text-stone-500">{item.category || 'General'}</span>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-sm font-bold text-stone-900">{item.totalQuantity} vendidos</div>
-                              <div className="text-xs text-stone-700 font-serif font-bold">
-                                ${(item.totalRevenue).toLocaleString('es-AR')}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Desglose por Método de Pago */}
-                <div className="p-5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                  <h3 className="font-bold text-slate-900 text-base mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span>💳</span>
-                      <span>Ingresos por Medio de Pago (Hoy)</span>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-500">
-                      Total: ${(report?.total_revenue || 0).toLocaleString('es-AR')}
-                    </span>
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                          <span>💵</span> Efectivo
-                        </span>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-bold">
-                          Caja Física
-                        </span>
-                      </div>
-                      <div className="text-2xl font-black text-slate-900">
-                        ${(report?.payment_breakdown?.cash || 0).toLocaleString('es-AR')}
-                      </div>
-                      <span className="text-[11px] text-slate-500 mt-1">Dinero recibido en mano</span>
-                    </div>
-
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                          <span>💳</span> Tarjetas
-                        </span>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-bold">
-                          Posnet / Bancario
-                        </span>
-                      </div>
-                      <div className="text-2xl font-black text-slate-900">
-                        ${(report?.payment_breakdown?.card || 0).toLocaleString('es-AR')}
-                      </div>
-                      <span className="text-[11px] text-slate-500 mt-1">Débito y crédito en lote</span>
-                    </div>
-
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                          <span>📱</span> Transferencia / MP
-                        </span>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-bold">
-                          Virtual / QR
-                        </span>
-                      </div>
-                      <div className="text-2xl font-black text-slate-900">
-                        ${(report?.payment_breakdown?.transfer || 0).toLocaleString('es-AR')}
-                      </div>
-                      <span className="text-[11px] text-slate-500 mt-1">Acreditación por comprobante</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Arqueo y Cierre de Turno de Caja */}
-                <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4 mb-5">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">💰</span>
-                        <h3 className="font-extrabold text-slate-900 text-lg">Arqueo y Cierre de Turno de Caja</h3>
-                        <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                          CONTROL EN VIVO
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Auditoría de cajón de dinero, conciliación de cobranzas físicas y balance del turno.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => handleCalculateShift(initialCashInput)}
-                        disabled={loadingShift}
-                        className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center gap-2 border border-slate-300 disabled:opacity-50 cursor-pointer"
-                      >
-                        <span>🔄 Recalcular Arqueo</span>
-                      </button>
-                      <button
-                        onClick={() => window.print()}
-                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all flex items-center gap-2 shadow-xs cursor-pointer"
-                      >
-                        <span>🖨️ Imprimir Cierre de Turno</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Parámetros de Fondo Inicial */}
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
-                      <div>
-                        <label className="text-xs font-bold text-slate-700 block mb-1">
-                          Fondo de Caja Inicial ($):
-                        </label>
-                        <p className="text-[11px] text-slate-500 mb-3">
-                          Cambio o saldo inicial con el que arrancó el cajón.
-                        </p>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2.5 text-slate-500 text-sm font-bold">$</span>
-                          <input
-                            type="number"
-                            value={initialCashInput}
-                            onChange={(e) => setInitialCashInput(e.target.value)}
-                            onBlur={() => handleCalculateShift(initialCashInput)}
-                            placeholder="10000"
-                            className="w-full pl-8 pr-3 py-2 rounded-xl bg-white border border-slate-300 text-sm font-bold text-slate-900 focus:outline-none focus:border-slate-500"
-                          />
-                        </div>
-                      </div>
-                      <div className="mt-4 pt-3 border-t border-slate-200 text-[11px] text-slate-500">
-                        Presiona enter o haz clic afuera para recalcular automáticamente.
-                      </div>
-                    </div>
-
-                    {/* Resumen del Cajón (Efectivo Esperado) */}
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-300 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                            Efectivo Esperado en Cajón
-                          </span>
-                          <span className="text-lg">💵</span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mb-2">
-                          (Fondo Inicial + Ventas en Efectivo)
-                        </p>
-                        <div className="text-3xl font-black text-slate-900">
-                          ${(shiftSummary?.expected_cash_in_drawer || (parseFloat(initialCashInput) || 0) + (report?.payment_breakdown?.cash || 0)).toLocaleString('es-AR')}
-                        </div>
-                      </div>
-                      <div className="mt-3 pt-3 border-t border-slate-200 text-[11px] text-slate-600">
-                        {shiftSummary?.total_orders_paid || report?.paid_orders || 0} pedidos cobrados en total
-                      </div>
-                    </div>
-
-                    {/* Desglose Contable Completo */}
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
-                      <div className="font-bold text-slate-700 border-b border-slate-200 pb-1.5 flex justify-between">
-                        <span>Concepto Contable</span>
-                        <span>Monto</span>
-                      </div>
-                      <div className="flex justify-between text-slate-600">
-                        <span>Fondo Inicial:</span>
-                        <span className="font-mono text-slate-900 font-semibold">
-                          ${(shiftSummary?.initial_cash ?? parseFloat(initialCashInput) ?? 0).toLocaleString('es-AR')}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-slate-700">
-                        <span>+ Ventas Efectivo:</span>
-                        <span className="font-mono font-bold text-slate-900">
-                          ${(shiftSummary?.cash_sales ?? report?.payment_breakdown?.cash ?? 0).toLocaleString('es-AR')}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-slate-700">
-                        <span>+ Ventas Tarjetas:</span>
-                        <span className="font-mono font-bold text-slate-900">
-                          ${(shiftSummary?.card_sales ?? report?.payment_breakdown?.card ?? 0).toLocaleString('es-AR')}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-slate-700">
-                        <span>+ Ventas Transferencias:</span>
-                        <span className="font-mono font-bold text-slate-900">
-                          ${(shiftSummary?.transfer_sales ?? report?.payment_breakdown?.transfer ?? 0).toLocaleString('es-AR')}
-                        </span>
-                      </div>
-                      <div className="pt-2 border-t border-slate-200 flex justify-between font-bold text-slate-900">
-                        <span>Total Facturado:</span>
-                        <span className="text-slate-900 font-mono">
-                          ${(shiftSummary?.total_sales ?? report?.total_revenue ?? 0).toLocaleString('es-AR')}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                <div className="mt-2 text-xs text-emerald-400 font-medium flex items-center gap-1">
+                  <span>✓</span> Mostrador & Takeaway activo
                 </div>
               </div>
-            )}
 
-            {/* ================= PESTAÑA: PROYECCIÓN DE COMPRAS ================= */}
-            {activeTab === 'proyeccion' && (
-              <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-base">Plan de Reposición por Consumo de Noche Anterior</h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Calculado automáticamente según recetas de los platos vendidos en el último turno (carne, pan, huevo, queso, vegetales) contra el stock disponible.
-                    </p>
-                    {projections[0]?.reference_shift && (
-                      <span className="inline-block mt-2 text-[11px] font-semibold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
-                        🌙 Turno de referencia: {projections[0].reference_shift}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs text-slate-500 block">Costo estimado total de compra:</span>
-                    <span className="text-xl font-black text-slate-900">
-                      $
-                      {projections
-                        .reduce((acc, curr) => acc + curr.estimated_cost, 0)
-                        .toLocaleString('es-AR')}
-                    </span>
-                  </div>
+              <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-5 shadow-sm">
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Total Comandas</span>
+                <div className="mt-2 text-3xl font-black text-white">
+                  {report?.total_orders || 0}
                 </div>
-
-                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wider border-b border-slate-200">
-                      <tr>
-                        <th className="px-4 py-3">Insumo</th>
-                        <th className="px-4 py-3">Stock Actual</th>
-                        <th className="px-4 py-3">Mínimo</th>
-                        <th className="px-4 py-3 text-slate-700 font-bold">Consumo Noche Anterior</th>
-                        <th className="px-4 py-3 text-slate-900 font-bold">Sugerido Comprar</th>
-                        <th className="px-4 py-3">Costo Estimado</th>
-                        <th className="px-4 py-3 text-right">Acción</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {projections.map((item) => (
-                        <tr
-                          key={item.id}
-                          className={`hover:bg-slate-50/80 transition-colors ${
-                            item.is_low_stock ? 'bg-rose-50/50' : ''
-                          }`}
-                        >
-                          <td className="px-4 py-3 font-semibold text-slate-900">
-                            <div className="flex items-center gap-2">
-                              {item.is_low_stock && (
-                                <span className="h-2 w-2 rounded-full bg-rose-500" title="Stock insuficiente para cubrir la noche o bajo mínimo" />
-                              )}
-                              <span>{item.name}</span>
-                            </div>
-                            {item.dishes_summary && (
-                              <p className="text-[10px] text-slate-500 font-normal mt-0.5 truncate max-w-xs" title={item.dishes_summary}>
-                                Receta en: {item.dishes_summary}
-                              </p>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-slate-600">
-                            {item.current_stock} {item.unit}
-                          </td>
-                          <td className="px-4 py-3 text-slate-500">
-                            {item.min_stock} {item.unit}
-                          </td>
-                          <td className="px-4 py-3 text-slate-700 font-semibold">
-                            {item.consumed_last_night ?? item.consumed_today} {item.unit}
-                          </td>
-                          <td className="px-4 py-3 font-black text-slate-900">
-                            {item.suggested_to_buy > 0 ? `${item.suggested_to_buy} ${item.unit}` : '—'}
-                          </td>
-                          <td className="px-4 py-3 text-slate-700 font-semibold">
-                            {item.estimated_cost > 0 ? `$${item.estimated_cost.toLocaleString('es-AR')}` : '—'}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <button
-                              onClick={() => handleOpenRestock(item)}
-                              className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-bold transition-colors cursor-pointer"
-                            >
-                              + Cargar Ingreso
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="mt-2 text-xs text-zinc-400">
+                  {report?.paid_orders || 0} cobradas · {report?.pending_orders || 0} en cocina
                 </div>
               </div>
-            )}
 
-            {/* ================= PESTAÑA: INVENTARIO ================= */}
-            {activeTab === 'inventario' && (
-              <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-base">Inventario de Materia Prima</h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Monitoreo de ingredientes, stock mínimo y registro de ingresos por compra.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold">
-                      {inventory.filter((i) => i.is_low_stock).length} Insumos Críticos
-                    </span>
-                  </div>
+              <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-5 shadow-sm">
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Demora Promedio</span>
+                <div className="mt-2 text-3xl font-black text-[#FF5A00]">
+                  {report?.avg_completion_time_minutes || 0} <span className="text-base text-zinc-400">min</span>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {inventory.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`p-4 rounded-xl border flex flex-col justify-between transition-all ${
-                        item.is_low_stock
-                          ? 'bg-rose-50/40 border-rose-300 shadow-xs'
-                          : 'bg-white border-slate-200 shadow-xs'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <h4 className="font-bold text-slate-900 text-base">{item.name}</h4>
-                          {item.is_low_stock && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-700 border border-rose-200">
-                              Stock Bajo
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 my-3 text-xs">
-                          <div className="p-2 rounded-lg bg-slate-50 border border-slate-200">
-                            <span className="text-slate-500 block text-[11px]">Stock Actual</span>
-                            <span
-                              className={`text-lg font-black ${
-                                item.is_low_stock ? 'text-rose-600' : 'text-slate-900'
-                              }`}
-                            >
-                              {item.current_stock}
-                            </span>
-                            <span className="text-slate-500 text-[10px] ml-1">{item.unit}</span>
-                          </div>
-
-                          <div className="p-2 rounded-lg bg-slate-50 border border-slate-200">
-                            <span className="text-slate-500 block text-[11px]">Stock Mínimo</span>
-                            <span className="text-lg font-bold text-slate-700">{item.min_stock}</span>
-                            <span className="text-slate-500 text-[10px] ml-1">{item.unit}</span>
-                          </div>
-                        </div>
-
-                        <div className="text-xs text-slate-500 mb-3">
-                          Costo Unitario: <span className="font-bold text-slate-800">${item.unit_cost}</span>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => handleOpenRestock(item)}
-                        className="w-full mt-2 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                      >
-                        📦 Registrar Ingreso / Compra
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Movimientos Recientes */}
-                <div className="mt-8 p-5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                  <h3 className="font-bold text-slate-900 text-base mb-4">Últimos Movimientos de Stock</h3>
-                  <div className="divide-y divide-slate-200">
-                    {transactions.slice(0, 8).map((t) => (
-                      <div key={t.id} className="py-2.5 flex items-center justify-between text-xs">
-                        <div>
-                          <span className="font-bold text-slate-900">{t.ingredient_name || `Insumo #${t.ingredient_id}`}</span>
-                          <span className="text-slate-500 ml-2">{t.notes}</span>
-                        </div>
-                        <div className="text-right">
-                          <span
-                            className={`font-black ${
-                              t.transaction_type === 'restock' ? 'text-emerald-700' : 'text-slate-700'
-                            }`}
-                          >
-                            {t.quantity > 0 ? `+${t.quantity}` : t.quantity} {t.unit}
-                          </span>
-                          <span className="text-slate-400 text-[10px] block">
-                            {new Date(t.created_at).toLocaleTimeString('es-AR', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ================= PESTAÑA: MENÚ Y PRECIOS ================= */}
-            {activeTab === 'menu' && (
-              <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-base">Carta y Precios de NANO LOMOS</h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Actualización de precios al instante y activación o pausa de platos en la comanda.
-                    </p>
-                  </div>
-                  <span className="text-xs font-semibold text-slate-500">
-                    {menuItems.length} platos en carta
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {menuItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-4 rounded-xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <h4 className="font-bold text-slate-900 text-base">{item.name}</h4>
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              item.is_active
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : 'bg-slate-100 text-slate-500 border border-slate-200'
-                            }`}
-                          >
-                            {item.is_active ? 'Disponible' : 'Pausado'}
-                          </span>
-                        </div>
-                        <span className="text-xs text-slate-600 font-semibold mb-2 block">
-                          {item.category || 'General'}
-                        </span>
-                        {item.description && (
-                          <p className="text-xs text-slate-500 mb-3 line-clamp-2">{item.description}</p>
-                        )}
-                        <div className="text-xl font-black text-slate-900 my-2">
-                          ${Number(item.price).toLocaleString('es-AR')}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-200">
-                        <button
-                          onClick={() => handleOpenEditPrice(item)}
-                          className="flex-1 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-bold transition-colors cursor-pointer"
-                        >
-                          ✏️ Modificar Precio
-                        </button>
-                        <button
-                          onClick={() => handleToggleItemStatus(item)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                            item.is_active
-                              ? 'border-slate-300 text-slate-600 hover:bg-slate-100'
-                              : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
-                          }`}
-                        >
-                          {item.is_active ? 'Pausar' : 'Activar'}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* ================= PESTAÑA: PERSONAL Y EQUIPO ================= */}
-            {activeTab === 'personal' && (
-              <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-base">Gestión de Personal de NANO LOMOS</h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Administración de mozos, cocineros y administradores. Modificá los roles para probar los accesos.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 self-start sm:self-auto">
-                    <button
-                      onClick={loadStaff}
-                      disabled={loadingStaff}
-                      className="px-3.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer border border-slate-300"
-                      title="Recargar lista de usuarios desde la base de datos"
-                    >
-                      <span className={loadingStaff ? 'animate-spin' : ''}>🔄</span> {loadingStaff ? 'Cargando...' : 'Actualizar'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setNewUsername('');
-                        setNewFullName('');
-                        setNewEmail('');
-                        setNewPassword('');
-                        setNewRole('waiter');
-                        setCreateUserModalOpen(true);
-                      }}
-                      className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
-                    >
-                      <span>➕</span> Nuevo Empleado
-                    </button>
-                  </div>
-                </div>
-
-                {loadingStaff ? (
-                  <div className="p-12 text-center bg-white rounded-xl border border-slate-200 shadow-xs">
-                    <div className="inline-block animate-spin text-2xl mb-2">🔄</div>
-                    <p className="text-sm font-bold text-slate-700">Cargando lista de empleados...</p>
-                    <p className="text-xs text-slate-400 mt-1">Conectando con la base de datos de NANO LOMOS</p>
-                  </div>
-                ) : staffUsers.length === 0 ? (
-                  <div className="p-10 text-center bg-white rounded-xl border border-slate-200 shadow-xs">
-                    <span className="text-4xl block mb-3">👥</span>
-                    <h4 className="font-black text-slate-800 text-base">No se visualizaron empleados</h4>
-                    <p className="text-xs text-slate-500 mt-1.5 max-w-md mx-auto">
-                      Puede haber ocurrido que tu sesión expiró o la consulta tardó en responder. Podés recargar ahora o volver a ingresar.
-                    </p>
-                    <div className="mt-5 flex items-center justify-center gap-3">
-                      <button
-                        onClick={loadStaff}
-                        className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs flex items-center gap-2"
-                      >
-                        <span>🔄</span> Reintentar Carga
-                      </button>
-                      <button
-                        onClick={() => router.replace('/login')}
-                        className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-300 transition-colors cursor-pointer"
-                      >
-                        Reingresar con Admin
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {staffUsers.map((staff) => (
-                      <div
-                        key={staff.id}
-                        className={`p-4 rounded-xl border flex flex-col justify-between transition-all ${
-                          staff.is_active ? 'bg-white border-slate-200 shadow-xs hover:border-slate-300' : 'bg-slate-50 border-slate-200 opacity-70'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-2 mb-2">
-                            <div>
-                              <h4 className="font-bold text-slate-900 text-base flex items-center gap-1.5">
-                                {staff.full_name}
-                                {staff.provider === 'google' && (
-                                  <span className="text-[10px] bg-sky-50 text-sky-700 border border-sky-200 px-1.5 py-0.2 rounded font-normal" title="Autenticado con Google">
-                                    Google
-                                  </span>
-                                )}
-                              </h4>
-                              <span className="text-xs text-slate-500 font-mono">@{staff.username}</span>
-                            </div>
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                staff.is_active
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
-                              }`}
-                            >
-                              {staff.is_active ? 'Activo' : 'Suspendido'}
-                            </span>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-1.5 my-2">
-                            <span
-                              className={`px-2.5 py-0.5 text-xs font-bold rounded-md flex items-center gap-1 ${
-                                staff.role === 'manager' || staff.role === 'admin'
-                                  ? 'bg-slate-800 text-white'
-                                  : staff.role === 'order_taker'
-                                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                                  : staff.role === 'cook'
-                                  ? 'bg-amber-50 text-amber-900 border border-amber-200'
-                                  : 'bg-blue-50 text-blue-800 border border-blue-200'
-                              }`}
-                            >
-                              {staff.role === 'manager' || staff.role === 'admin'
-                                ? '👑 Gerente / Admin'
-                                : staff.role === 'order_taker'
-                                ? '🛍️ Cajero Mostrador'
-                                : staff.role === 'cook'
-                                ? '👨‍🍳 Cocina / KDS'
-                                : '🍽️ Mozo (Salón)'}
-                            </span>
-                            {staff.email && (
-                              <span className="text-xs text-slate-500 truncate max-w-[200px]" title={staff.email}>
-                                ✉️ {staff.email}
-                              </span>
-                            )}
-                          </div>
-
-                          {staff.last_login_at && (
-                            <p className="text-[11px] text-slate-400 mt-2">
-                              Último acceso: {new Date(staff.last_login_at).toLocaleString('es-AR')}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-200">
-                          <button
-                            onClick={() => {
-                              setSelectedStaffUser(staff);
-                              setEditUserRole(staff.role);
-                              setEditRoleModalOpen(true);
-                            }}
-                            className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1"
-                          >
-                            <span>🛡️</span> Rol / Permisos
-                          </button>
-                          {staff.provider !== 'google' && (
-                            <button
-                              onClick={() => {
-                                setSelectedStaffUser(staff);
-                                setResetPwdInput('');
-                                setResetPwdModalOpen(true);
-                              }}
-                              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-300 transition-colors cursor-pointer"
-                              title="Cambiar contraseña local"
-                            >
-                              🔑 Clave
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleToggleUserStatus(staff)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                              staff.is_active
-                                ? 'border-slate-300 text-slate-600 hover:bg-slate-100'
-                                : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
-                            }`}
-                          >
-                            {staff.is_active ? 'Suspender' : 'Activar'}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Historial de Accesos Recientes */}
-                <div className="mt-8 p-5 rounded-xl bg-white border border-slate-200 shadow-xs">
-                  <h3 className="font-bold text-slate-900 text-base mb-4 flex items-center gap-2">
-                    <span>📋 Historial de Ingresos al Sistema</span>
-                  </h3>
-                  {loginHistory.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic py-4">No hay registros de ingresos recientes.</p>
+                <div className="mt-2 text-xs text-zinc-400">
+                  {report?.delayed_orders_count ? (
+                    <span className="text-amber-400">⚠️ {report.delayed_orders_count} pedidos demorados</span>
                   ) : (
-                    <div className="divide-y divide-slate-200">
-                      {loginHistory.slice(0, 10).map((h) => (
-                        <div key={h.id} className="py-2.5 flex items-center justify-between text-xs">
-                          <div>
-                            <span className="font-bold text-slate-900">{h.full_name || h.username || 'Usuario'}</span>
-                            <span className="text-slate-500 ml-2">Método: {h.login_method}</span>
-                            {h.ip_address && <span className="text-slate-400 ml-2 font-mono text-[11px]">IP: {h.ip_address}</span>}
-                          </div>
-                          <div className="text-right">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                h.status === 'success'
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
-                              }`}
-                            >
-                              {h.status === 'success' ? 'Exitoso' : 'Fallido'}
-                            </span>
-                            <span className="text-slate-400 text-[10px] block mt-0.5">
-                              {new Date(h.created_at).toLocaleString('es-AR')}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    <span className="text-emerald-400">⚡ Servicio rápido al día</span>
                   )}
                 </div>
               </div>
-            )}
-          </>
-        )}
-      </main>
 
-      {/* MODAL: Ingreso de Mercadería / Reabastecimiento */}
-      {restockModalOpen && selectedIngredient && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h3 className="text-lg font-black text-slate-900 mb-1">Registrar Ingreso de Stock</h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Insumo: <span className="text-slate-800 font-bold">{selectedIngredient.name}</span>
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Cantidad a ingresar ({selectedIngredient.unit}):
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={restockQty}
-                  onChange={(e) => setRestockQty(e.target.value)}
-                  placeholder={`Ej: 20 ${selectedIngredient.unit}`}
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 font-bold text-lg focus:outline-none focus:border-slate-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Nota / Proveedor (opcional):
-                </label>
-                <input
-                  type="text"
-                  value={restockNotes}
-                  onChange={(e) => setRestockNotes(e.target.value)}
-                  placeholder="Ej: Factura #1234 - Frigorífico Central"
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm focus:outline-none focus:border-slate-500"
-                />
-              </div>
-
-              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600">
-                Stock actual: <strong className="text-slate-900">{selectedIngredient.current_stock} {selectedIngredient.unit}</strong> →{' '}
-                Nuevo stock estimado:{' '}
-                <strong className="text-slate-900">
-                  {selectedIngredient.current_stock + (Number(restockQty) || 0)} {selectedIngredient.unit}
-                </strong>
+              <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-5 shadow-sm">
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Alerta de Insumos</span>
+                <div className="mt-2 text-3xl font-black text-white">
+                  {lowStockCount > 0 ? (
+                    <span className="text-red-400">{lowStockCount} <span className="text-base">críticos</span></span>
+                  ) : (
+                    <span className="text-emerald-400">100% <span className="text-base">óptimo</span></span>
+                  )}
+                </div>
+                <div className="mt-2 text-xs text-zinc-400">
+                  {lowStockCount > 0 ? 'Reponer para el turno noche' : 'Stock de seguridad completo'}
+                </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 mt-6">
+            {/* SECCIÓN ARQUEO Y CIERRE DE CAJA EXPRESS */}
+            <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 shadow-sm space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#2A2A30] pb-4">
+                <div>
+                  <h2 className="text-lg font-black text-white flex items-center gap-2">
+                    <span>💵</span> Arqueo & Balance de Caja del Turno
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Control de dinero en efectivo vs ventas digitales (QR Mercado Pago y Tarjetas)
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 bg-[#121214] border border-zinc-700/60 rounded-xl px-3 py-1.5">
+                    <span className="text-xs font-bold text-zinc-400">Fondo Inicial $:</span>
+                    <input
+                      type="number"
+                      value={initialCashInput}
+                      onChange={(e) => {
+                        setInitialCashInput(e.target.value);
+                        handleCalculateShift(e.target.value);
+                      }}
+                      className="w-24 bg-transparent text-white font-black text-sm text-right focus:outline-hidden"
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleCalculateShift()}
+                    disabled={loadingShift}
+                    className="px-3.5 py-2 text-xs font-bold rounded-xl bg-[#FF5A00] text-white hover:bg-[#e04f00] transition disabled:opacity-50"
+                  >
+                    {loadingShift ? 'Calculando...' : 'Recalcular'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Tarjetas del Arqueo */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-[#121214] border border-emerald-500/30 rounded-xl p-4">
+                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Efectivo en Cajón Esperado</span>
+                  <div className="mt-1.5 text-2xl font-black text-emerald-300">
+                    ${Number(shiftSummary?.expected_cash_in_drawer || 0).toLocaleString('es-AR')}
+                  </div>
+                  <div className="mt-1 text-[11px] text-zinc-400">
+                    Fondo (${Number(shiftSummary?.initial_cash || 0).toLocaleString('es-AR')}) + Ventas ($
+                    {Number(shiftSummary?.cash_sales || 0).toLocaleString('es-AR')})
+                  </div>
+                </div>
+
+                <div className="bg-[#121214] border border-sky-500/30 rounded-xl p-4">
+                  <span className="text-xs font-bold text-sky-400 uppercase tracking-wider">QR / Mercado Pago</span>
+                  <div className="mt-1.5 text-2xl font-black text-sky-300">
+                    ${Number(shiftSummary?.transfer_sales || 0).toLocaleString('es-AR')}
+                  </div>
+                  <div className="mt-1 text-[11px] text-zinc-400">Transferencias y cobros con QR</div>
+                </div>
+
+                <div className="bg-[#121214] border border-purple-500/30 rounded-xl p-4">
+                  <span className="text-xs font-bold text-purple-400 uppercase tracking-wider">Tarjetas (POSnet)</span>
+                  <div className="mt-1.5 text-2xl font-black text-purple-300">
+                    ${Number(shiftSummary?.card_sales || 0).toLocaleString('es-AR')}
+                  </div>
+                  <div className="mt-1 text-[11px] text-zinc-400">Débito y Crédito procesadas</div>
+                </div>
+
+                <div className="bg-[#121214] border border-[#FF5A00]/40 rounded-xl p-4">
+                  <span className="text-xs font-bold text-[#FF5A00] uppercase tracking-wider">Ventas Netas del Turno</span>
+                  <div className="mt-1.5 text-2xl font-black text-white">
+                    ${Number(shiftSummary?.total_sales || 0).toLocaleString('es-AR')}
+                  </div>
+                  <div className="mt-1 text-[11px] text-zinc-400">
+                    {shiftSummary?.total_orders_paid || 0} pedidos cobrados
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Platos Estrella Más Vendidos */}
+            <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 shadow-sm space-y-4">
+              <h3 className="text-base font-black text-white flex items-center gap-2">
+                <span>⭐</span> Especialidades Más Vendidas de la Jornada
+              </h3>
+
+              {topItems.length === 0 ? (
+                <div className="text-center py-8 text-zinc-500 text-xs">
+                  Aún no se registraron ventas de platos en la jornada actual.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {topItems.map((item, idx) => (
+                    <div
+                      key={item.id}
+                      className="bg-[#121214] border border-zinc-800 rounded-xl p-4 flex items-center justify-between gap-3"
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-400">
+                          <span className="text-[#FF5A00]">#{idx + 1}</span>
+                          <span>{item.category || 'Nano Lomos'}</span>
+                        </div>
+                        <div className="font-black text-white text-sm mt-0.5">{item.name}</div>
+                        <div className="text-xs text-emerald-400 font-semibold mt-1">
+                          ${Number(item.totalRevenue).toLocaleString('es-AR')}
+                        </div>
+                      </div>
+                      <div className="bg-[#242429] px-3 py-1.5 rounded-lg border border-zinc-700/60 text-center">
+                        <span className="text-lg font-black text-[#FF5A00]">{item.totalQuantity}</span>
+                        <span className="block text-[10px] text-zinc-400 uppercase font-bold">Unidades</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* PESTAÑA 2: INSUMOS Y STOCK EN VIVO                            */}
+        {/* ============================================================== */}
+        {activeTab === 'inventario' && (
+          <div className="space-y-6">
+            <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-black text-white flex items-center gap-2">
+                    <span>🥩</span> Estado del Inventario de Cocina en Tiempo Real
+                  </h2>
+                  <p className="text-xs text-zinc-400">
+                    Deducción automática según las recetas oficiales de cada plato vendido
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    placeholder="Buscar insumo (carne, pan, queso)..."
+                    value={ingredientSearch}
+                    onChange={(e) => setIngredientSearch(e.target.value)}
+                    className="bg-[#121214] border border-zinc-700/60 rounded-xl px-3.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-hidden focus:border-[#FF5A00] w-64"
+                  />
+                  <button
+                    onClick={loadData}
+                    className="px-3 py-1.5 text-xs font-bold rounded-xl bg-[#242429] text-zinc-300 hover:text-white transition"
+                  >
+                    Actualizar
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#121214] text-zinc-400 font-bold border-b border-zinc-800">
+                    <tr>
+                      <th className="p-3">Insumo</th>
+                      <th className="p-3">Unidad</th>
+                      <th className="p-3">Stock Actual</th>
+                      <th className="p-3">Mínimo Seguridad</th>
+                      <th className="p-3">Nivel de Stock</th>
+                      <th className="p-3">Estado</th>
+                      <th className="p-3 text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 font-medium">
+                    {filteredInventory.map((ing) => {
+                      const cur = Number(ing.current_stock || 0);
+                      const min = Number(ing.min_stock || 0);
+                      const ratio = min > 0 ? Math.min(100, Math.round((cur / (min * 2)) * 100)) : 100;
+                      const isLow = cur < min;
+
+                      return (
+                        <tr key={ing.id} className="hover:bg-[#202025] transition">
+                          <td className="p-3 font-bold text-white">{ing.name}</td>
+                          <td className="p-3 text-zinc-400">{ing.unit}</td>
+                          <td className="p-3 font-black text-sm text-white">
+                            {cur} <span className="text-xs font-normal text-zinc-400">{ing.unit}</span>
+                          </td>
+                          <td className="p-3 text-zinc-400">
+                            {min} {ing.unit}
+                          </td>
+                          <td className="p-3 w-40">
+                            <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${
+                                  isLow ? 'bg-red-500' : cur < min * 1.5 ? 'bg-amber-500' : 'bg-emerald-500'
+                                }`}
+                                style={{ width: `${Math.max(5, ratio)}%` }}
+                              />
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            {isLow ? (
+                              <span className="px-2 py-0.5 rounded-md bg-red-500/15 text-red-400 border border-red-500/30 font-bold text-[11px]">
+                                ⚠️ Reponer
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold text-[11px]">
+                                ✓ Óptimo
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => handleOpenRestock(ing)}
+                              className="px-2.5 py-1 rounded-lg bg-[#FF5A00]/15 hover:bg-[#FF5A00] text-[#FF5A00] hover:text-white border border-[#FF5A00]/30 text-xs font-bold transition"
+                            >
+                              + Reponer
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Historial de Movimientos de Stock Recientes */}
+            <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 shadow-sm space-y-4">
+              <h3 className="text-base font-black text-white flex items-center gap-2">
+                <span>📋</span> Movimientos Recientes de Inventario (Auditoría)
+              </h3>
+
+              <div className="overflow-x-auto max-h-72">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#121214] text-zinc-400 font-bold border-b border-zinc-800 sticky top-0">
+                    <tr>
+                      <th className="p-2.5">Fecha/Hora</th>
+                      <th className="p-2.5">Insumo</th>
+                      <th className="p-2.5">Tipo</th>
+                      <th className="p-2.5">Cantidad</th>
+                      <th className="p-2.5">Detalle / Comanda</th>
+                      <th className="p-2.5">Usuario</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 font-medium text-zinc-300">
+                    {transactions.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-[#202025]">
+                        <td className="p-2.5 text-zinc-400">
+                          {tx.created_at ? new Date(tx.created_at).toLocaleTimeString('es-AR') : '-'}
+                        </td>
+                        <td className="p-2.5 font-bold text-white">{tx.ingredient_name || `#${tx.ingredient_id}`}</td>
+                        <td className="p-2.5">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                              tx.transaction_type === 'usage'
+                                ? 'bg-amber-500/15 text-amber-300'
+                                : tx.transaction_type === 'reversal'
+                                ? 'bg-sky-500/15 text-sky-300'
+                                : 'bg-emerald-500/15 text-emerald-300'
+                            }`}
+                          >
+                            {tx.transaction_type}
+                          </span>
+                        </td>
+                        <td className="p-2.5 font-black text-white">
+                          {Number(tx.quantity) > 0 ? `+${tx.quantity}` : tx.quantity} {tx.unit}
+                        </td>
+                        <td className="p-2.5 text-zinc-400 truncate max-w-xs">{tx.notes || '-'}</td>
+                        <td className="p-2.5 text-zinc-400">{tx.created_by || 'Sistema'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* PESTAÑA 3: PROYECCIÓN INTELIGENTE DE COMPRAS                  */}
+        {/* ============================================================== */}
+        {activeTab === 'proyeccion' && (
+          <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 shadow-sm space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#2A2A30] pb-4">
+              <div>
+                <h2 className="text-lg font-black text-white flex items-center gap-2">
+                  <span>🛒</span> Proyección de Compra para el Próximo Servicio
+                </h2>
+                <p className="text-xs text-zinc-400">
+                  Cálculo algorítmico basado en el consumo exacto de recetas del último turno sin quebrar stock
+                </p>
+              </div>
+
+              <div className="bg-[#121214] border border-[#FF5A00]/40 rounded-xl px-4 py-2 text-right">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase">Costo Total Estimado</span>
+                <div className="text-xl font-black text-[#FF5A00]">
+                  $
+                  {projections
+                    .reduce((acc, curr) => acc + (curr.estimated_cost || 0), 0)
+                    .toLocaleString('es-AR')}
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-[#121214] text-zinc-400 font-bold border-b border-zinc-800">
+                  <tr>
+                    <th className="p-3">Insumo</th>
+                    <th className="p-3">Stock Actual</th>
+                    <th className="p-3">Consumido Último Turno</th>
+                    <th className="p-3">Sugerido Comprar</th>
+                    <th className="p-3">Costo Est. ($)</th>
+                    <th className="p-3">Platos que lo demandaron</th>
+                    <th className="p-3 text-right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/60 font-medium">
+                  {projections.map((proj) => (
+                    <tr key={proj.id} className="hover:bg-[#202025]">
+                      <td className="p-3 font-bold text-white">{proj.name}</td>
+                      <td className="p-3">
+                        <span className={proj.is_low_stock ? 'text-red-400 font-bold' : 'text-zinc-300'}>
+                          {proj.current_stock} {proj.unit}
+                        </span>
+                      </td>
+                      <td className="p-3 text-zinc-300">
+                        {proj.consumed_last_night} {proj.unit}
+                      </td>
+                      <td className="p-3">
+                        {proj.suggested_to_buy > 0 ? (
+                          <span className="text-emerald-400 font-black text-sm">
+                            +{proj.suggested_to_buy} {proj.unit}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-500">Suficiente</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-zinc-300 font-semibold">
+                        {proj.estimated_cost > 0 ? `$${proj.estimated_cost.toLocaleString('es-AR')}` : '-'}
+                      </td>
+                      <td className="p-3 text-zinc-400 text-[11px] max-w-xs truncate">
+                        {proj.dishes_summary || 'Sin consumo reciente'}
+                      </td>
+                      <td className="p-3 text-right">
+                        {proj.suggested_to_buy > 0 && (
+                          <button
+                            onClick={() => handleOpenRestock(proj)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500 text-emerald-400 hover:text-white border border-emerald-500/30 text-xs font-bold transition"
+                          >
+                            Pedir Insumo
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* PESTAÑA 4: GESTIÓN DE CARTA OFICIAL Y PRECIOS                 */}
+        {/* ============================================================== */}
+        {activeTab === 'menu' && (
+          <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 shadow-sm space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#2A2A30] pb-4">
+              <div>
+                <h2 className="text-lg font-black text-white flex items-center gap-2">
+                  <span>🍔</span> Carta Oficial de Nano Lomos ({menuItems.length} platos)
+                </h2>
+                <p className="text-xs text-zinc-400">
+                  Ajuste instantáneo de precios y disponibilidad para POS Mostrador y Delivery
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="text"
+                  placeholder="Buscar especialidad..."
+                  value={menuSearch}
+                  onChange={(e) => setMenuSearch(e.target.value)}
+                  className="bg-[#121214] border border-zinc-700/60 rounded-xl px-3.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-hidden focus:border-[#FF5A00] w-56"
+                />
+              </div>
+            </div>
+
+            {/* Selector de Categorías */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold capitalize transition ${
+                    selectedCategory === cat
+                      ? 'bg-[#FF5A00] text-white'
+                      : 'bg-[#121214] text-zinc-400 hover:text-white border border-zinc-800'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredMenuItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="bg-[#121214] border border-zinc-800 rounded-2xl p-4 flex flex-col justify-between hover:border-zinc-700 transition"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-[10px] font-bold text-[#FF5A00] uppercase tracking-wider">
+                        {item.category || 'Nano Lomos'}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          item.is_active ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
+                        }`}
+                      >
+                        {item.is_active ? 'Activo' : 'Pausado'}
+                      </span>
+                    </div>
+
+                    <h4 className="font-black text-white text-base mt-1">{item.name}</h4>
+                    <p className="text-xs text-zinc-400 mt-1 line-clamp-2">{item.description || '-'}</p>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-zinc-800/80 flex items-center justify-between">
+                    <span className="text-xl font-black text-white">
+                      ${Number(item.price).toLocaleString('es-AR')}
+                    </span>
+                    <button
+                      onClick={() => handleOpenEditPrice(item)}
+                      className="px-3 py-1.5 rounded-xl bg-[#242429] hover:bg-[#FF5A00] text-zinc-300 hover:text-white border border-zinc-700/60 text-xs font-bold transition"
+                    >
+                      ✏️ Editar Precio
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* PESTAÑA 5: PERSONAL Y AUDITORÍA                               */}
+        {/* ============================================================== */}
+        {activeTab === 'personal' && (
+          <div className="space-y-6">
+            <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-black text-white flex items-center gap-2">
+                    <span>👥</span> Equipo de Trabajo de Nano Lomos
+                  </h2>
+                  <p className="text-xs text-zinc-400">Cajeros de mostrador, cocineros y supervisores activos</p>
+                </div>
+
+                <button
+                  onClick={() => setCreateUserModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-[#FF5A00] text-white hover:bg-[#e04f00] text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-[#FF5A00]/20"
+                >
+                  <span>+</span> Dar de Alta Empleado
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#121214] text-zinc-400 font-bold border-b border-zinc-800">
+                    <tr>
+                      <th className="p-3">Nombre</th>
+                      <th className="p-3">Usuario</th>
+                      <th className="p-3">Rol</th>
+                      <th className="p-3">Email</th>
+                      <th className="p-3">Último Ingreso</th>
+                      <th className="p-3 text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 font-medium">
+                    {staffUsers.map((st) => (
+                      <tr key={st.id} className="hover:bg-[#202025]">
+                        <td className="p-3 font-bold text-white">{st.full_name}</td>
+                        <td className="p-3 text-zinc-400">@{st.username}</td>
+                        <td className="p-3">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              st.role === 'manager'
+                                ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
+                                : st.role === 'cook'
+                                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                : 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                            }`}
+                          >
+                            {st.role === 'order_taker' ? 'Cajero Mostrador' : st.role}
+                          </span>
+                        </td>
+                        <td className="p-3 text-zinc-400">{st.email || '-'}</td>
+                        <td className="p-3 text-zinc-400">
+                          {st.last_login_at ? new Date(st.last_login_at).toLocaleString('es-AR') : 'Nunca'}
+                        </td>
+                        <td className="p-3 text-right">
+                          <button
+                            onClick={() => handleOpenResetPwd(st)}
+                            className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-bold transition"
+                          >
+                            Reset Password
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Auditoría de Logins */}
+            <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 shadow-sm space-y-4">
+              <h3 className="text-base font-black text-white flex items-center gap-2">
+                <span>🛡️</span> Historial de Inicios de Sesión
+              </h3>
+
+              <div className="overflow-x-auto max-h-64">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#121214] text-zinc-400 font-bold border-b border-zinc-800 sticky top-0">
+                    <tr>
+                      <th className="p-2.5">Fecha</th>
+                      <th className="p-2.5">Usuario</th>
+                      <th className="p-2.5">Método</th>
+                      <th className="p-2.5">Estado</th>
+                      <th className="p-2.5">IP</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 font-medium text-zinc-300">
+                    {loginHistory.map((h) => (
+                      <tr key={h.id} className="hover:bg-[#202025]">
+                        <td className="p-2.5 text-zinc-400">
+                          {h.created_at ? new Date(h.created_at).toLocaleString('es-AR') : '-'}
+                        </td>
+                        <td className="p-2.5 font-bold text-white">{h.username || h.full_name || `#${h.user_id}`}</td>
+                        <td className="p-2.5 text-zinc-400">{h.login_method}</td>
+                        <td className="p-2.5">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              h.status === 'success' ? 'text-emerald-400' : 'text-red-400'
+                            }`}
+                          >
+                            {h.status}
+                          </span>
+                        </td>
+                        <td className="p-2.5 text-zinc-400">{h.ip_address || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* ============================================================== */}
+      {/* MODAL: INGRESO DE STOCK (RESTOCK)                              */}
+      {/* ============================================================== */}
+      {restockModalOpen && selectedIngredient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+          <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+            <h3 className="text-base font-black text-white flex items-center gap-2">
+              <span>🥩</span> Ingreso de Stock: {selectedIngredient.name}
+            </h3>
+            <p className="text-xs text-zinc-400">
+              Stock actual: <strong className="text-white">{selectedIngredient.current_stock} {selectedIngredient.unit}</strong>
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-zinc-300 mb-1">
+                  Cantidad a ingresar ({selectedIngredient.unit})
+                </label>
+                <input
+                  type="number"
+                  placeholder="Ej: 10"
+                  value={restockQty}
+                  onChange={(e) => setRestockQty(e.target.value)}
+                  className="w-full bg-[#121214] border border-zinc-700 rounded-xl p-2.5 text-white font-bold focus:outline-hidden focus:border-[#FF5A00]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-300 mb-1">Notas / Proveedor</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Carnicería Don Carlos remito #884"
+                  value={restockNotes}
+                  onChange={(e) => setRestockNotes(e.target.value)}
+                  className="w-full bg-[#121214] border border-zinc-700 rounded-xl p-2.5 text-white text-xs focus:outline-hidden focus:border-[#FF5A00]"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setRestockModalOpen(false)}
-                disabled={savingRestock}
-                className="flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold rounded-xl text-zinc-400 hover:text-white"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleConfirmRestock}
                 disabled={savingRestock}
-                className="flex-1 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold shadow-xs transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-[#FF5A00] text-white hover:bg-[#e04f00] disabled:opacity-50"
               >
                 {savingRestock ? 'Guardando...' : 'Confirmar Ingreso'}
               </button>
@@ -1411,130 +1184,110 @@ export default function ManagerDashboard() {
         </div>
       )}
 
-      {/* MODAL: Modificar Precio de Plato */}
+      {/* ============================================================== */}
+      {/* MODAL: EDITAR PRECIO                                          */}
+      {/* ============================================================== */}
       {priceModalOpen && selectedMenuItem && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h3 className="text-lg font-black text-slate-900 mb-1">Modificar Precio de Plato</h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Plato: <span className="text-slate-800 font-bold">{selectedMenuItem.name}</span>
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Nuevo Precio ($):</label>
-                <input
-                  type="number"
-                  step="50"
-                  value={newPrice}
-                  onChange={(e) => setNewPrice(e.target.value)}
-                  placeholder="Ej: 5500"
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 font-bold text-lg focus:outline-none focus:border-slate-500"
-                />
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+          <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-xl">
+            <h3 className="text-base font-black text-white">Editar Precio: {selectedMenuItem.name}</h3>
+            <div>
+              <label className="block text-xs font-bold text-zinc-300 mb-1">Nuevo Precio ($)</label>
+              <input
+                type="number"
+                value={newPrice}
+                onChange={(e) => setNewPrice(e.target.value)}
+                className="w-full bg-[#121214] border border-zinc-700 rounded-xl p-2.5 text-white font-black text-lg focus:outline-hidden focus:border-[#FF5A00]"
+              />
             </div>
-
-            <div className="flex items-center gap-3 mt-6">
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setPriceModalOpen(false)}
-                disabled={savingPrice}
-                className="flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold rounded-xl text-zinc-400 hover:text-white"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleConfirmUpdatePrice}
                 disabled={savingPrice}
-                className="flex-1 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold shadow-xs transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-[#FF5A00] text-white hover:bg-[#e04f00] disabled:opacity-50"
               >
-                {savingPrice ? 'Guardando...' : 'Actualizar Precio'}
+                {savingPrice ? 'Guardando...' : 'Actualizar'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL: Crear Nuevo Empleado */}
+      {/* ============================================================== */}
+      {/* MODAL: ALTA DE EMPLEADO                                        */}
+      {/* ============================================================== */}
       {createUserModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h3 className="text-lg font-black text-slate-900 mb-1">Nuevo Empleado</h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Crea una cuenta para mozo, cocinero o gerente con credenciales de acceso.
-            </p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+          <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+            <h3 className="text-base font-black text-white flex items-center gap-2">
+              <span>👥</span> Dar de Alta Nuevo Empleado
+            </h3>
 
-            <div className="space-y-3">
+            <div className="space-y-3 text-xs">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Nombre Completo:</label>
+                <label className="block font-bold text-zinc-300 mb-1">Nombre Completo</label>
                 <input
                   type="text"
+                  placeholder="Ej: Lucas Gómez"
                   value={newFullName}
                   onChange={(e) => setNewFullName(e.target.value)}
-                  placeholder="Ej: Juan Pérez"
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm focus:outline-none focus:border-slate-500"
+                  className="w-full bg-[#121214] border border-zinc-700 rounded-xl p-2.5 text-white focus:outline-hidden focus:border-[#FF5A00]"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Usuario de Acceso:</label>
+                <label className="block font-bold text-zinc-300 mb-1">Usuario</label>
                 <input
                   type="text"
+                  placeholder="Ej: lucas.mostrador"
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
-                  placeholder="Ej: juan.mozo"
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm focus:outline-none focus:border-slate-500"
+                  className="w-full bg-[#121214] border border-zinc-700 rounded-xl p-2.5 text-white focus:outline-hidden focus:border-[#FF5A00]"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Email (opcional):</label>
-                <input
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="juan@nanolomos.com"
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm focus:outline-none focus:border-slate-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Contraseña Inicial:</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Mínimo 6 caracteres"
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm focus:outline-none focus:border-slate-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Puesto / Rol:</label>
+                <label className="block font-bold text-zinc-300 mb-1">Rol Operativo</label>
                 <select
                   value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as 'order_taker' | 'waiter' | 'cook' | 'manager')}
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm focus:outline-none focus:border-slate-500"
+                  onChange={(e) => setNewRole(e.target.value as any)}
+                  className="w-full bg-[#121214] border border-zinc-700 rounded-xl p-2.5 text-white focus:outline-hidden focus:border-[#FF5A00]"
                 >
-                  <option value="order_taker">🛍️ Cajero Mostrador (Pedidos, Asignación, WhatsApp)</option>
-                  <option value="waiter">🍽️ Mozo de Salón (Solo mesas del salón)</option>
-                  <option value="cook">👨‍🍳 Cocinero / KDS</option>
-                  <option value="manager">👑 Gerente / Administrador</option>
+                  <option value="order_taker">Cajero Mostrador / Pedidos (order_taker)</option>
+                  <option value="cook">Cocinero (cook)</option>
+                  <option value="manager">Gerente / Supervisor (manager)</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-zinc-300 mb-1">Contraseña</label>
+                <input
+                  type="password"
+                  placeholder="Mínimo 6 caracteres"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full bg-[#121214] border border-zinc-700 rounded-xl p-2.5 text-white focus:outline-hidden focus:border-[#FF5A00]"
+                />
               </div>
             </div>
 
-            <div className="flex items-center gap-3 mt-6">
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setCreateUserModalOpen(false)}
-                disabled={savingUser}
-                className="flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold rounded-xl text-zinc-400 hover:text-white"
               >
                 Cancelar
               </button>
               <button
-                onClick={handleCreateUser}
+                onClick={handleConfirmCreateUser}
                 disabled={savingUser}
-                className="flex-1 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold shadow-xs transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-[#FF5A00] text-white hover:bg-[#e04f00] disabled:opacity-50"
               >
                 {savingUser ? 'Creando...' : 'Crear Empleado'}
               </button>
@@ -1543,180 +1296,36 @@ export default function ManagerDashboard() {
         </div>
       )}
 
-      {/* MODAL: Resetear Contraseña */}
+      {/* ============================================================== */}
+      {/* MODAL: RESET PASSWORD                                         */}
+      {/* ============================================================== */}
       {resetPwdModalOpen && selectedStaffUser && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <h3 className="text-lg font-black text-slate-900 mb-1">Restablecer Contraseña</h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Empleado: <span className="text-slate-800 font-bold">{selectedStaffUser.full_name}</span> (@{selectedStaffUser.username})
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Nueva Contraseña:</label>
-                <input
-                  type="password"
-                  value={resetPwdInput}
-                  onChange={(e) => setResetPwdInput(e.target.value)}
-                  placeholder="Mínimo 6 caracteres"
-                  className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm focus:outline-none focus:border-slate-500"
-                />
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+          <div className="bg-[#18181B] border border-[#2A2A30] rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-xl">
+            <h3 className="text-base font-black text-white">Resetear Clave: {selectedStaffUser.full_name}</h3>
+            <div>
+              <label className="block text-xs font-bold text-zinc-300 mb-1">Nueva Contraseña</label>
+              <input
+                type="password"
+                placeholder="Mínimo 6 caracteres"
+                value={resetPwdInput}
+                onChange={(e) => setResetPwdInput(e.target.value)}
+                className="w-full bg-[#121214] border border-zinc-700 rounded-xl p-2.5 text-white text-sm focus:outline-hidden focus:border-[#FF5A00]"
+              />
             </div>
-
-            <div className="flex items-center gap-3 mt-6">
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setResetPwdModalOpen(false)}
-                disabled={savingResetPwd}
-                className="flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold rounded-xl text-zinc-400 hover:text-white"
               >
                 Cancelar
               </button>
               <button
-                onClick={handleResetPassword}
+                onClick={handleConfirmResetPwd}
                 disabled={savingResetPwd}
-                className="flex-1 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold shadow-xs transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-[#FF5A00] text-white hover:bg-[#e04f00] disabled:opacity-50"
               >
-                {savingResetPwd ? 'Guardando...' : 'Guardar Contraseña'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* MODAL: Modificar Rol y Privilegios */}
-      {editRoleModalOpen && selectedStaffUser && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-xl">🛡️</span>
-              <h3 className="text-lg font-black text-slate-900">Privilegios y Rol de Usuario</h3>
-            </div>
-            <p className="text-xs text-slate-500 mb-4">
-              Empleado: <span className="text-slate-800 font-bold">{selectedStaffUser.full_name}</span> (@{selectedStaffUser.username})
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-2">Seleccionar Perfil de Acceso:</label>
-                <div className="space-y-2">
-                  <label
-                    onClick={() => setEditUserRole('manager')}
-                    className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                      editUserRole === 'manager' || editUserRole === 'admin'
-                        ? 'bg-slate-100 border-slate-400'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="roleOption"
-                      checked={editUserRole === 'manager' || editUserRole === 'admin'}
-                      onChange={() => setEditUserRole('manager')}
-                      className="mt-1"
-                    />
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                        <span>👑 Gerente / Administrador</span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        Acceso total a ventas, arqueo de caja, stock, recetas, precios y gestión de usuarios.
-                      </p>
-                    </div>
-                  </label>
-
-                  <label
-                    onClick={() => setEditUserRole('order_taker')}
-                    className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                      editUserRole === 'order_taker'
-                        ? 'bg-emerald-50 border-emerald-400'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="roleOption"
-                      checked={editUserRole === 'order_taker'}
-                      onChange={() => setEditUserRole('order_taker')}
-                      className="mt-1"
-                    />
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                        <span>🛍️ Cajero Mostrador (Principal)</span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        Toma de pedidos en mostrador, asignación directa a cocineros, seguimiento de demoras y WhatsApp con clientes.
-                      </p>
-                    </div>
-                  </label>
-
-                  <label
-                    onClick={() => setEditUserRole('waiter')}
-                    className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                      editUserRole === 'waiter'
-                        ? 'bg-blue-50 border-blue-400'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="roleOption"
-                      checked={editUserRole === 'waiter'}
-                      onChange={() => setEditUserRole('waiter')}
-                      className="mt-1"
-                    />
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                        <span>🍽️ Mozo de Salón</span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        Atención exclusiva de mesas del salón (vista reservada para cuando se habiliten mesas).
-                      </p>
-                    </div>
-                  </label>
-
-                  <label
-                    onClick={() => setEditUserRole('cook')}
-                    className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                      editUserRole === 'cook'
-                        ? 'bg-amber-50 border-amber-400'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="roleOption"
-                      checked={editUserRole === 'cook'}
-                      onChange={() => setEditUserRole('cook')}
-                      className="mt-1"
-                    />
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                        <span>👨‍🍳 Cocinero / KDS</span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        Pantalla de cocina, toma de comandas, despacho de platos y consulta de recetas.
-                      </p>
-                    </div>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 mt-6">
-              <button
-                onClick={() => setEditRoleModalOpen(false)}
-                disabled={savingEditRole}
-                className="flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold transition-colors cursor-pointer"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleUpdateRole}
-                disabled={savingEditRole}
-                className="flex-1 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold transition-colors cursor-pointer shadow-xs"
-              >
-                {savingEditRole ? 'Guardando...' : 'Aplicar Privilegios'}
+                {savingResetPwd ? 'Guardando...' : 'Actualizar Clave'}
               </button>
             </div>
           </div>

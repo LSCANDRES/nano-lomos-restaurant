@@ -72,28 +72,29 @@ export class ReportsService {
         case 'delivered':
           deliveredOrders++;
           break;
-        case 'paid': {
+        case 'paid':
           paidOrders++;
-          const amount = Number(order.total_amount || 0);
-          totalRevenue += amount;
-
-          // Clasificar método de pago desde cancel_reason
-          const reason = (order.cancel_reason || '').toLowerCase();
-          if (reason.includes('tarjeta')) {
-            cardRevenue += amount;
-          } else if (reason.includes('transferencia') || reason.includes('mp') || reason.includes('mercado')) {
-            transferRevenue += amount;
-          } else if (reason.includes('efectivo')) {
-            cashRevenue += amount;
-          } else {
-            // Por defecto en restaurante tradicional si no se especificó
-            cashRevenue += amount;
-          }
           break;
-        }
         case 'cancelled':
           cancelledOrders++;
           break;
+      }
+
+      // En modelo Takeaway de Nano Lomos, un pedido con [PAGO: ...] cobrado al mostrador o con status 'paid'
+      // representa ingreso real para la caja y balance diario (siempre que no esté cancelado).
+      const isPaid = order.status === 'paid' || (order.cancel_reason && order.cancel_reason.includes('[PAGO:'));
+      if (isPaid && order.status !== 'cancelled') {
+        const amount = Number(order.total_amount || 0);
+        totalRevenue += amount;
+
+        const reason = (order.cancel_reason || '').toLowerCase();
+        if (reason.includes('tarjeta')) {
+          cardRevenue += amount;
+        } else if (reason.includes('transferencia') || reason.includes('mp') || reason.includes('mercado') || reason.includes('qr')) {
+          transferRevenue += amount;
+        } else {
+          cashRevenue += amount;
+        }
       }
 
       if (order.completed_at && order.created_at) {
@@ -145,7 +146,7 @@ export class ReportsService {
     const orderLines = await prisma.order_lines.findMany({
       where: {
         orders: {
-          status: { in: ['paid', 'delivered', 'ready_to_deliver', 'in_progress'] },
+          status: { in: ['paid', 'delivered', 'ready_to_deliver', 'in_progress', 'pending'] },
           created_at: { gte: today },
         },
       },
